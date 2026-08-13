@@ -19,7 +19,7 @@ function boot() {
   const probe = probeCanvas.getContext('webgl2') || probeCanvas.getContext('webgl');
   if (!probe) {
     document.body.innerHTML =
-      '<div class="noscript">This browser can\'t start WebGL, so Deck Runner ' +
+      '<div class="noscript">This browser can\'t start WebGL, so Deck Surfers ' +
       'can\'t run. Try a current Chrome, Firefox, Edge or Safari with hardware ' +
       'acceleration enabled.</div>';
     return;

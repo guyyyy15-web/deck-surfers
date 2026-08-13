@@ -114,10 +114,193 @@ export function createAudio() {
     } catch (e) { /* ignore */ }
   }
 
+
+  /* ------------------------------------------------------------------ */
+  /* Music                                                               */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * A synthesised boom-bap loop for the menu — kick, snare, hats, a sub
+   * bassline and a minor-key stab. No audio files: it is all oscillators
+   * plus the same noise buffer the SFX use.
+   *
+   * Timing comes from a lookahead scheduler rather than setTimeout alone.
+   * Queueing each note against `ctx.currentTime` a little ahead of when it
+   * sounds is what keeps a loop from drifting audibly.
+   */
+  const BPM = 90;
+  const BEAT = 60 / BPM;
+  const STEP = BEAT / 4;             // sixteenth notes
+  const STEPS = 64;                  // four bars
+  const LOOKAHEAD = 0.12;            // seconds queued ahead of the clock
+
+  // A minor: bass root per bar, and a stab chord voicing.
+  const BASS = [55.00, 55.00, 73.42, 65.41];       // A1  A1  D2  C2
+  const STAB = [[220.0, 261.6, 329.6], [246.9, 293.7, 349.2]];  // Am, Bdim-ish
+
+  let musicGain = null;
+  let timer = null;
+  let step = 0;
+  let nextTime = 0;
+
+  function kick(t) {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(150, t);
+    osc.frequency.exponentialRampToValueAtTime(45, t + 0.11);
+    g.gain.setValueAtTime(0.9, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+    osc.connect(g).connect(musicGain);
+    osc.start(t);
+    osc.stop(t + 0.26);
+  }
+
+  function snare(t) {
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuffer;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1900;
+    bp.Q.value = 0.8;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.17);
+    src.connect(bp).connect(g).connect(musicGain);
+    src.start(t);
+    src.stop(t + 0.19);
+  }
+
+  function hat(t, open) {
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuffer;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 7000;
+    const g = ctx.createGain();
+    const dur = open ? 0.16 : 0.045;
+    g.gain.setValueAtTime(open ? 0.16 : 0.12, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(hp).connect(g).connect(musicGain);
+    src.start(t);
+    src.stop(t + dur + 0.02);
+  }
+
+  function bass(t, freq, dur) {
+    const osc = ctx.createOscillator();
+    const lp = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, t);
+    lp.type = 'lowpass';
+    lp.frequency.value = 420;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.42, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(lp).connect(g).connect(musicGain);
+    osc.start(t);
+    osc.stop(t + dur + 0.02);
+  }
+
+  function stab(t, chord) {
+    // Two detuned saws per note through a lowpass — cheap and suitably lo-fi.
+    for (const f of chord) {
+      for (const detune of [-6, 6]) {
+        const osc = ctx.createOscillator();
+        const lp = ctx.createBiquadFilter();
+        const g = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.value = f;
+        osc.detune.value = detune;
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(2200, t);
+        lp.frequency.exponentialRampToValueAtTime(700, t + 0.3);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.06, t + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
+        osc.connect(lp).connect(g).connect(musicGain);
+        osc.start(t);
+        osc.stop(t + 0.36);
+      }
+    }
+  }
+
+  /** One sixteenth-note step of the pattern. */
+  function scheduleStep(i, t) {
+    const inBar = i % 16;
+    const bar = Math.floor(i / 16);
+
+    // Boom-bap skeleton: kick on 1 and the "and" of 3, snare on 2 and 4.
+    if (inBar === 0 || inBar === 10) kick(t);
+    if (inBar === 6 && bar % 2 === 1) kick(t);
+    if (inBar === 4 || inBar === 12) snare(t);
+    if (inBar % 2 === 0) hat(t, inBar === 14);
+
+    if (inBar === 0) bass(t, BASS[bar], BEAT * 1.4);
+    if (inBar === 8) bass(t, BASS[bar] * 1.5, BEAT * 0.5);
+
+    // Stab only on bars 2 and 4 so the loop doesn't fatigue.
+    if (inBar === 2 && (bar === 1 || bar === 3)) stab(t, STAB[bar === 1 ? 0 : 1]);
+  }
+
+  function tick() {
+    while (nextTime < ctx.currentTime + LOOKAHEAD) {
+      scheduleStep(step % STEPS, nextTime);
+      step++;
+      nextTime += STEP;
+    }
+  }
+
+  /** Start (or fade back in) the menu loop. */
+  function startMusic() {
+    if (!ctx || timer) return;
+    if (!musicGain) {
+      musicGain = ctx.createGain();
+      musicGain.gain.value = 0;
+      musicGain.connect(master);
+    }
+    step = 0;
+    nextTime = ctx.currentTime + 0.06;
+    musicGain.gain.cancelScheduledValues(ctx.currentTime);
+    musicGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    musicGain.gain.linearRampToValueAtTime(0.5, ctx.currentTime + 0.8);
+    tick();
+    timer = setInterval(tick, 25);
+  }
+
+  /** Fade out and stop — called when a run begins, so SFX stay readable. */
+  function stopMusic(fade = 0.6) {
+    if (!ctx || !timer) return;
+    const t = ctx.currentTime;
+    musicGain.gain.cancelScheduledValues(t);
+    musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), t);
+    musicGain.gain.exponentialRampToValueAtTime(0.0001, t + fade);
+    clearInterval(timer);
+    timer = null;
+  }
+
+  /** Duck the music without stopping it — used while a run is in progress
+   *  so the coin and jump blips stay readable over the beat. */
+  function setMusicLevel(level, fade = 0.5) {
+    if (!ctx || !musicGain) return;
+    const t = ctx.currentTime;
+    musicGain.gain.cancelScheduledValues(t);
+    musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), t);
+    musicGain.gain.linearRampToValueAtTime(Math.max(0.0001, level), t + fade);
+  }
+
+  function musicPlaying() {
+    return timer !== null;
+  }
+
   return {
     unlock,
     play,
     setMuted,
+    startMusic,
+    stopMusic,
+    setMusicLevel,
+    musicPlaying,
     toggleMuted: () => { setMuted(!muted); return muted; },
     isMuted: () => muted,
   };

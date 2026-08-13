@@ -67,9 +67,19 @@ export function createGame({ canvas }) {
   const params = new URLSearchParams(location.search);
   const choiceEvery = Number(params.get('choiceEvery')) || CFG.CHOICE_EVERY_M;
 
+  const MUSIC_MENU = 0.5;
+  const MUSIC_RUN = 0.26;
+
+  /** Audio can only start from a real gesture, so every entry point that
+   *  follows one unlocks and kicks the loop off. startMusic() is idempotent. */
+  function wakeAudio() {
+    audio.unlock();
+    audio.startMusic();
+  }
+
   const ui = createUI({
-    onPlay: () => { audio.unlock(); startRun(); },
-    onRestart: () => { audio.unlock(); startRun(); },
+    onPlay: () => { wakeAudio(); startRun(); },
+    onRestart: () => { wakeAudio(); startRun(); },
     onResume: () => resume(),
     onPickUpgrade: (id) => pickUpgrade(id),
     onToggleMute: () => ui.setMuted(audio.toggleMuted()),
@@ -104,6 +114,7 @@ export function createGame({ canvas }) {
     ui.setUpgradeIcons([]);
     ui.updateHUD(run);
     ui.showHUD();
+    audio.setMusicLevel(MUSIC_RUN);
     state = STATE.PLAYING;
   }
 
@@ -119,6 +130,7 @@ export function createGame({ canvas }) {
 
   function finishRun() {
     state = STATE.GAME_OVER;
+    audio.setMusicLevel(MUSIC_MENU);
     if (run.score > best) {
       best = run.score;
       try {
@@ -240,7 +252,7 @@ export function createGame({ canvas }) {
     if (state === STATE.CHOICE_PAUSE) ui.pickByIndex(i);
   });
   input.on('confirm', () => {
-    audio.unlock();
+    wakeAudio();
     if (state === STATE.MENU || state === STATE.GAME_OVER) startRun();
     else if (state === STATE.PAUSED) resume();
   });
@@ -361,6 +373,13 @@ export function createGame({ canvas }) {
     lastTime = performance.now();
     ui.showScreen('menu');
     state = STATE.MENU;
+
+    // Browsers refuse to start audio without a gesture, so the menu loop
+    // begins on the first interaction of any kind rather than only on PLAY.
+    const kick = () => wakeAudio();
+    window.addEventListener('pointerdown', kick, { once: true });
+    window.addEventListener('keydown', kick, { once: true });
+
     requestAnimationFrame(frame);
   }
 

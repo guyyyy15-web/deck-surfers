@@ -13,7 +13,6 @@ import { buildPlayer, mat } from './voxel.js';
 export function createPlayer(scene) {
   const rig = buildPlayer();
   scene.add(rig.root);
-  scene.add(rig.shadow);
 
   const s = {
     laneIndex: 1,
@@ -151,7 +150,7 @@ export function createPlayer(scene) {
   /* ---------------- procedural animation ---------------- */
 
   function animate(dt) {
-    const { root, board, body, legL, legR, armL, armR, torso, shadow } = rig;
+    const { root, board, body, legL, legR, armL, armR, torso } = rig;
 
     root.position.set(s.x, s.y, 0);
     root.rotation.z = -s.leanZ * 0.42;
@@ -160,7 +159,6 @@ export function createPlayer(scene) {
     if (s.dead) {
       root.rotation.x += dt * 6;
       root.rotation.z += dt * 3;
-      shadow.visible = false;
       return;
     }
 
@@ -197,14 +195,6 @@ export function createPlayer(scene) {
         ? s.boardSpin
         : Math.max(-0.5, Math.min(0.5, s.vy * 0.045));
     }
-
-    // Contact shadow shrinks and fades with altitude.
-    const h = Math.max(0, s.y - 0);
-    shadow.visible = true;
-    shadow.position.set(s.x, 0.03, 0);
-    const k = Math.max(0.35, 1 - h * 0.28);
-    shadow.scale.set(1.3 * k, 2.1 * k, 1);
-    shadow.material.opacity = 0.35 * k;
 
     rig.shield.rotation.y += dt * 1.6;
     rig.shield.scale.setScalar(1 + Math.sin(s.animT * 5) * 0.05);

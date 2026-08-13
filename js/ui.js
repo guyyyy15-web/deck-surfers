@@ -67,10 +67,12 @@ export function createUI(handlers) {
     }
   }
 
+  /** One markup for both places: CSS hides the name in the HUD and reveals
+   *  it in the game-over list, so there is only one thing to keep in sync. */
   function chipHTML(u) {
     const stack = u.level > 1 ? `<span class="chip-stack">×${u.level}</span>` : '';
     return `<span class="chip" data-rarity="${u.rarity}" data-upgrade="${u.id}" title="${u.name}">
-      <span class="chip-icon">${u.icon}</span><span>${u.name}</span>${stack}</span>`;
+      <span class="chip-icon">${u.icon}</span><span class="chip-name">${u.name}</span>${stack}</span>`;
   }
 
   function setUpgradeIcons(list) {
@@ -152,6 +154,18 @@ export function createUI(handlers) {
   }
 
   /* ---------------- wiring ---------------- */
+
+  // The full controls table stays collapsed by default — the menu should be
+  // a wordmark and a PLAY button, not a manual.
+  const howtoBtn = document.getElementById('btn-howto');
+  const howtoPanel = document.getElementById('howto');
+  if (howtoBtn && howtoPanel) {
+    howtoBtn.addEventListener('click', () => {
+      const open = !howtoPanel.hidden;
+      howtoPanel.hidden = open;
+      howtoBtn.setAttribute('aria-expanded', String(!open));
+    });
+  }
 
   document.getElementById('btn-play').addEventListener('click', handlers.onPlay);
   document.getElementById('btn-restart').addEventListener('click', handlers.onRestart);

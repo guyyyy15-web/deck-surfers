@@ -15,7 +15,6 @@ import { PAL, CFG } from './config.js';
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
 const COIN_GEO = new THREE.CylinderGeometry(0.42, 0.42, 0.12, 6);
 const GEM_GEO = new THREE.OctahedronGeometry(0.42, 0);
-const SHADOW_GEO = new THREE.PlaneGeometry(1, 1);
 
 const matCache = new Map();
 
@@ -44,8 +43,22 @@ function addBox(parent, w, h, d, hex, x, y, z, opts) {
   return m;
 }
 
+/**
+ * Set shadow flags across a whole subtree. Applied centrally in each builder
+ * so a newly added box can't silently miss out and float shadowless.
+ */
+export function setShadow(obj, cast, receive) {
+  obj.traverse((o) => {
+    if (o.isMesh) {
+      o.castShadow = cast;
+      o.receiveShadow = receive;
+    }
+  });
+  return obj;
+}
+
 export function geometryCount() {
-  return 4;
+  return 3;
 }
 export function materialCount() {
   return matCache.size;
@@ -128,18 +141,15 @@ export function buildPlayer() {
   magnetRing.visible = false;
   root.add(magnetRing);
 
-  // Fake contact shadow — cheaper and more readable than a shadow map.
-  const shadow = new THREE.Mesh(
-    SHADOW_GEO,
-    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false })
-  );
-  shadow.rotation.x = -Math.PI / 2;
-  shadow.scale.set(1.3, 2.1, 1);
+  // The skater casts a real shadow now, so there is no fake blob quad.
+  // The upgrade rings/bubble are unlit overlays and deliberately cast nothing.
+  setShadow(board, true, false);
+  setShadow(body, true, false);
 
   return {
     root, board, deck, wheels, body,
     legL, legR, torso, armL, armR, head,
-    shield, hoverRing, magnetRing, shadow,
+    shield, hoverRing, magnetRing,
   };
 }
 
@@ -184,19 +194,21 @@ export function buildObstacle(type) {
     g.userData = { type, hx: 0.85, hz: 3.5, yMin: 0, yMax: 1.9 };
   }
 
-  return g;
+  return setShadow(g, true, true);
 }
 
 export function buildCoin() {
   const m = new THREE.Mesh(COIN_GEO, mat(PAL.coin));
   m.rotation.x = Math.PI / 2;
   m.userData = { type: 'coin' };
+  m.castShadow = true;
   return m;
 }
 
 export function buildGem() {
   const m = new THREE.Mesh(GEM_GEO, mat(PAL.gem));
   m.userData = { type: 'gem' };
+  m.castShadow = true;
   return m;
 }
 
@@ -206,7 +218,7 @@ export function buildCrate() {
   addBox(g, 1.0, 0.14, 0.14, PAL.barrierTrim, 0, 0, 0);
   addBox(g, 0.14, 1.0, 0.14, PAL.barrierTrim, 0, 0, 0);
   g.userData = { type: 'crate' };
-  return g;
+  return setShadow(g, true, true);
 }
 
 /* ------------------------------------------------------------------ */
@@ -238,7 +250,7 @@ export function buildScenery(kind, rng) {
     addBox(g, 1.8, 0.3, 0.22, PAL.window, -0.3, 3.1, 0);
   }
 
-  return g;
+  return setShadow(g, true, false);
 }
 
 /** One recycled slab of road: surface, curbs and lane stripes. */
@@ -257,5 +269,5 @@ export function buildGroundSlab(shadeAlt) {
     addBox(g, 0.14, 0.02, 2.2, PAL.stripe, -1.2, 0.005, z);
   }
 
-  return g;
+  return setShadow(g, false, true);
 }

@@ -78,33 +78,41 @@ export const CFG = Object.freeze({
   SHIELD_INVULN: 1.3,        // seconds of i-frames after a shield break
 
   // ---- rendering ----
-  RENDER_HEIGHT: IS_COARSE ? 208 : 288, // internal buffer height -> chunky pixels
-  MIN_RENDER_HEIGHT: 160,
+  // Rendered at full device resolution. The chunky look now comes from the
+  // geometry being made of boxes, not from throwing pixels away.
+  MAX_DPR: 2,
   FOV: 60,
   // Flat enough to see a long way down the track — the player needs time to
   // read a row before reaching it.
   CAMERA_POS: [0, 3.5, 10.2],
   CAMERA_LOOK: [0, 1.7, -13],
   CAMERA_LANE_SWAY: 0.32,
-  FOG_NEAR: 42,
-  FOG_FAR: IS_COARSE ? 105 : 130,
-  DRAW_DISTANCE: 210,
+  // Fog sits much further out than before: the old distances were tuned to
+  // hide pop-in at a resolution where nothing was sharp enough to notice.
+  FOG_NEAR: 65,
+  FOG_FAR: IS_COARSE ? 150 : 195,
+  DRAW_DISTANCE: 280,
+  SHADOW_MAP: IS_COARSE ? 1024 : 2048,
   MAX_PARTICLES: IS_COARSE ? 240 : 460,
 
   // ---- simulation ----
   MAX_FRAME_DT: 0.05,        // clamp so a backgrounded tab can't tunnel
 
   // ---- storage (score/mute only — never upgrades) ----
+  // Deliberately still 'deckrunner:' after the rename to Deck Surfers —
+  // changing the key would silently wipe every existing high score.
   KEY_BEST: 'deckrunner:best',
   KEY_MUTED: 'deckrunner:muted',
 });
 
 /** Fixed retro palette — every mesh in the game draws from this list. */
 export const PAL = Object.freeze({
-  // The sky stays deep so the fogged horizon reads as depth, but everything
-  // the player has to react to sits well above it in value — a dark road on
-  // a dark sky is unreadable at this render resolution.
-  sky: 0x241a3d,
+  // Dusk gradient: deep violet overhead falling to a hot magenta horizon.
+  // Fog is matched to the horizon band so the street dissolves into the sky
+  // instead of stopping at a hard line.
+  skyTop: 0x150b32,
+  skyHorizon: 0xa84776,
+  sky: 0xa84776,
   ground: 0x6f68a6,
   groundAlt: 0x635c96,
   // Muted, so lane markings never get mistaken for gold pickups.
@@ -133,7 +141,7 @@ export const PAL = Object.freeze({
   rail: 0x9d4edd,
 
   // Dark enough to recede behind the action, light enough to read as a city.
-  building: [0x33285e, 0x3d3070, 0x5b4b9c, 0x46387f, 0x2c2252],
+  building: [0x3f3277, 0x4c3c8c, 0x5f4ea3, 0x483a83, 0x372c68],
   window: 0xffe8a3,
 
   shield: 0x48cae4,
