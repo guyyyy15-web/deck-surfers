@@ -52,7 +52,7 @@ function overlaps(a, minX, maxX, minY, maxY, minZ, maxZ) {
  * Two distinct skill moments, both measured from the contact envelope so the
  * reward tracks how close the player actually came:
  *
- *   dodge — passed in a neighbouring lane, within NEAR_MISS_X of contact.
+ *   dodge — squeezed past sideways, within NEAR_MISS_MARGIN of contact.
  *   clear — was laterally inside the obstacle and got over or under it,
  *           within NEAR_MISS_Y. This is the jumped block and the ducked
  *           gantry.
@@ -62,10 +62,16 @@ function nearMissKind(a, px, ox, ud) {
   const dx = Math.abs(px - ox);
 
   if (dx > contactX) {
-    // Deliberately tighter than the 2.4 lane spacing: sitting safely in the
-    // next lane is not a near miss. This only fires when the player was
-    // still cutting across as they went past.
-    return dx <= CFG.NEAR_MISS_X ? 'dodge' : null;
+    // Measured as a margin *beyond* contact, not as an absolute distance.
+    // An absolute threshold is silently tied to whichever obstacle is widest:
+    // a barrier (contact 1.37) would get a 0.53-unit band while the narrow
+    // grind rail (contact 0.2) would get 1.7, handing out near-misses for
+    // passes that were never close. This keeps the band the same real
+    // clearance whatever the obstacle's width.
+    //
+    // It still has to stay under the 2.4 lane spacing, so sitting safely in
+    // the next lane is never a near miss — only cutting across as you pass.
+    return dx - contactX <= CFG.NEAR_MISS_MARGIN ? 'dodge' : null;
   }
 
   // Laterally overlapping, so it was survived vertically — a tight ollie

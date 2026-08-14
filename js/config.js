@@ -42,6 +42,20 @@ export const CFG = Object.freeze({
   FAST_FALL_V: -17,
 
   // ---- ducking ----
+  // ---- animation ----
+  LAND_SQUASH_TIME: 0.28,   // how long the landing dip takes to decay
+
+  // Rider skeleton. Shared by voxel.js (which builds the bones) and player.js
+  // (which solves them), so the two can never drift apart. Heights are chosen
+  // so that with the legs straight the soles rest exactly on the deck:
+  //   HIP_Y - (THIGH + SHIN) == ANKLE_Y
+  RIG: Object.freeze({
+    HIP_Y: 0.925,
+    THIGH: 0.3,
+    SHIN: 0.26,
+    ANKLE_Y: 0.365,         // deck top 0.245 + the shoe's 0.12
+  }),
+
   DUCK_MIN_TIME: 0.55,
   DUCK_TIME_BONUS: 0.3,     // per stack of Air Brake
 
@@ -105,7 +119,10 @@ export const CFG = Object.freeze({
   // as a trick rather than a bump.
   RAIL_LEN: 24,
   RAIL_HALF_LEN: 12,
-  RAIL_RIDE_Y: 1.75,        // bar centre 1.6 + half its 0.3 height
+  // A square handrail section. Deliberately narrower than the 0.72 deck: a
+  // grind should look like balancing on an edge, not like riding a platform.
+  RAIL_WIDTH: 0.26,
+  RAIL_RIDE_Y: 1.75,        // top of the bar — where the board sits
   // Landing tolerance. The jump arc is above the rail while descending for
   // only ~0.19s, but the player may attach anywhere along the rail's length,
   // so the real window is the whole traversal. This just softens the edge.
@@ -123,7 +140,10 @@ export const CFG = Object.freeze({
   // Measured outward from the contact width, so a "dodge" is a lane squeeze
   // that genuinely nearly hit, and a "clear" is a jump or duck that passed
   // within NEAR_MISS_Y of the obstacle.
-  NEAR_MISS_X: 1.9,
+  // Clearance beyond the contact envelope that still counts as a near miss.
+  // A margin rather than an absolute distance, so a wide barrier and a narrow
+  // rail both demand the same real closeness — see nearMissKind().
+  NEAR_MISS_MARGIN: 0.53,
   NEAR_MISS_Y: 0.45,
 
   // ---- coins ----
@@ -224,6 +244,33 @@ export function phaseFor(distance) {
   return PHASES[Math.floor(distance / CFG.PHASE_LENGTH) % PHASES.length];
 }
 
+/**
+ * Rider skins. Each one is nothing but a set of slot overrides — the rig in
+ * voxel.js registers every mesh it builds under a slot name, and
+ * `rig.applySkin()` recolours whole slots at once.
+ *
+ * Adding a skin therefore means adding data here and nothing else: no rig
+ * changes, no new meshes, no new materials beyond what `mat()` already
+ * caches. Slots left out keep their PAL default.
+ *
+ * Try them with `__RUNNER.setSkin('midnight')` in the console.
+ */
+export const SKINS = Object.freeze({
+  classic: {},
+  midnight: {
+    skin: 0xd8a273, hair: 0x120c1e,
+    shirt: 0x2f2a6b, shirtAlt: 0x211c52,
+    pants: 0x161327, shoes: 0x4fd6ff, shoeSole: 0x2b2d42,
+    cap: 0xff3d8e, pack: 0x120c1e, packStrap: 0x2f2a6b,
+  },
+  highlighter: {
+    skin: 0x8d5524, hair: 0x1a1410,
+    shirt: 0xd8ff3d, shirtAlt: 0xa8cc22,
+    pants: 0x1f1f28, shoes: 0xff3d8e, shoeSole: 0xf2e9e4,
+    cap: 0x1f1f28, pack: 0xff3d8e, packStrap: 0x1f1f28,
+  },
+});
+
 /** Fixed retro palette — every mesh in the game draws from this list. */
 export const PAL = Object.freeze({
   // Dusk gradient: deep violet overhead falling to a hot magenta horizon.
@@ -243,12 +290,24 @@ export const PAL = Object.freeze({
   stripe: 0xcdc6ee,
   curb: 0xa79ed8,
 
+  // ---- the rider ----
+  // Each of these maps to a slot on the rig, so a skin is just a set of
+  // overrides for some of them — see SKINS below.
   skin: 0xffcf9e,
-  shirt: 0xff5d5d,
-  pants: 0x2b2d42,
-  helmet: 0x4fd6ff,
+  hair: 0x3b2a1f,
+  shirt: 0xff5d5d,          // hoodie body
+  shirtAlt: 0xd83c58,       // hood and sleeve cuffs, a shade down
+  // Light enough to read against dark asphalt — the old near-black legs
+  // disappeared into the road at night.
+  pants: 0x454a78,
+  shoes: 0xf2e9e4,
+  shoeSole: 0x9d95c7,
+  cap: 0x4fd6ff,
+  pack: 0x3a3f8f,
+  packStrap: 0x2b2d42,
 
   deck: 0x2ee6a8,
+  grip: 0x1a1a24,           // grip tape, so the deck top isn't bare colour
   truck: 0xadb5bd,
   wheel: 0x22223b,
 

@@ -115,39 +115,170 @@ export function materialCount() {
 export function buildPlayer() {
   const root = new THREE.Group();
 
+  /**
+   * Slot registry. Every mesh is filed under a semantic name as it is built,
+   * so a skin is a set of colour overrides and nothing more — see SKINS in
+   * config.js. This is the only place that has to know which boxes are
+   * "trousers"; everything downstream just names the slot.
+   */
+  const slots = {};
+  function put(slot, mesh) {
+    (slots[slot] || (slots[slot] = [])).push(mesh);
+    mesh.userData.slot = slot;
+    return mesh;
+  }
+  /** addBox + register under a slot. */
+  function part(parent, slot, w, h, d, hex, x, y, z) {
+    return put(slot, addBox(parent, w, h, d, hex, x, y, z));
+  }
+
   // --- board (its own group so it can spin independently on air jumps) ---
   const board = new THREE.Group();
-  const deck = addBox(board, 0.72, 0.09, 1.95, PAL.deck, 0, 0.2, 0);
-  addBox(board, 0.5, 0.09, 0.2, PAL.truck, 0, 0.13, 0.62);
-  addBox(board, 0.5, 0.09, 0.2, PAL.truck, 0, 0.13, -0.62);
+  const deck = part(board, 'deck', 0.72, 0.09, 1.95, PAL.deck, 0, 0.2, 0);
+  // Kicked nose and tail, so the deck reads as a skateboard from behind
+  // rather than as a plank.
+  const nose = part(board, 'deck', 0.66, 0.08, 0.34, PAL.deck, 0, 0.245, 0.93);
+  nose.rotation.x = -0.42;
+  const tail = part(board, 'deck', 0.66, 0.08, 0.34, PAL.deck, 0, 0.245, -0.93);
+  tail.rotation.x = 0.42;
+  part(board, 'grip', 0.6, 0.02, 1.7, PAL.grip, 0, 0.253, 0);
+  part(board, 'trucks', 0.5, 0.09, 0.2, PAL.truck, 0, 0.13, 0.62);
+  part(board, 'trucks', 0.5, 0.09, 0.2, PAL.truck, 0, 0.13, -0.62);
   const wheels = [
-    addBox(board, 0.17, 0.17, 0.17, PAL.wheel, 0.28, 0.085, 0.62),
-    addBox(board, 0.17, 0.17, 0.17, PAL.wheel, -0.28, 0.085, 0.62),
-    addBox(board, 0.17, 0.17, 0.17, PAL.wheel, 0.28, 0.085, -0.62),
-    addBox(board, 0.17, 0.17, 0.17, PAL.wheel, -0.28, 0.085, -0.62),
+    part(board, 'wheels', 0.17, 0.17, 0.17, PAL.wheel, 0.28, 0.085, 0.62),
+    part(board, 'wheels', 0.17, 0.17, 0.17, PAL.wheel, -0.28, 0.085, 0.62),
+    part(board, 'wheels', 0.17, 0.17, 0.17, PAL.wheel, 0.28, 0.085, -0.62),
+    part(board, 'wheels', 0.17, 0.17, 0.17, PAL.wheel, -0.28, 0.085, -0.62),
   ];
   root.add(board);
 
-  // --- rider ---
-  const body = new THREE.Group();
-  const torso = addBox(body, 0.54, 0.5, 0.32, PAL.shirt, 0, 0.96, 0);
-  const head = addBox(body, 0.35, 0.35, 0.35, PAL.skin, 0, 1.4, 0);
-  addBox(body, 0.41, 0.16, 0.41, PAL.helmet, 0, 1.62, 0);
-  addBox(body, 0.41, 0.1, 0.16, PAL.helmet, 0, 1.55, 0.2);
+  /* ---------------- rider ----------------
+   *
+   * Two things drive the layout. First, a real skater rides side-on, so the
+   * whole body is yawed and the feet are staggered along the board over the
+   * trucks — that alone reads as riding rather than standing on a plank.
+   * Second, the camera is *always* behind him, so the rear silhouette is the
+   * only one that ever matters: that is where the hood, the backpack and the
+   * backwards cap brim go.
+   *
+   * Heights are load-bearing. The head must top out at CFG.STAND_HEIGHT and
+   * the tuck pose must fit under CFG.DUCK_HEIGHT, or the art silently stops
+   * agreeing with the hitboxes in collision.js.
+   */
 
-  // Limbs hang from a pivot group at the shoulder/hip, so rotating the group
-  // swings the limb from its joint instead of spinning it about its middle.
-  function limb(w, h, d, hex, x, jointY, z) {
-    const pivot = new THREE.Group();
-    pivot.position.set(x, jointY, z);
-    addBox(pivot, w, h, d, hex, 0, -h / 2, 0);
-    body.add(pivot);
-    return pivot;
+  const body = new THREE.Group();
+  // Ridden side-on. The head is yawed back the other way further down so he
+  // still looks where he is going.
+  body.rotation.y = 0.52;
+
+  /*
+   * Heights are worked backwards from two fixed numbers, and must stay that
+   * way: the shoe soles land on the deck top (0.245) and the cap tops out at
+   * CFG.STAND_HEIGHT (1.7). Everything between is allocated to fit.
+   *
+   *   1.70  cap crown top ...... = STAND_HEIGHT
+   *   1.355 head pivot
+   *   0.925 hip pivot ........... HIP_Y
+   *   0.625 knee
+   *   0.365 ankle
+   *   0.245 sole ................ deck top
+   */
+  const { HIP_Y, THIGH, SHIN } = CFG.RIG;
+
+  // hipRoot is the fixed anchor; `hips` inside it is what the poses move, so
+  // 'hips.y' can be written as an offset instead of every pose repeating the
+  // absolute height.
+  const hipRoot = new THREE.Group();
+  hipRoot.position.y = HIP_Y;
+  body.add(hipRoot);
+
+  const hips = new THREE.Group();
+  hipRoot.add(hips);
+  part(hips, 'pants', 0.46, 0.2, 0.36, PAL.pants, 0, -0.06, 0);
+
+  // The torso rides *on* the hips rather than beside them, so dropping the
+  // hips into a crouch takes the chest and head down with it. This is the
+  // whole reason ducking can be a real crouch instead of a scale squash.
+  const torso = new THREE.Group();
+  hips.add(torso);
+  part(torso, 'shirt', 0.56, 0.42, 0.36, PAL.shirt, 0, 0.19, 0);
+  // A neck. Without it the head sat straight on the collar and he read as
+  // hunched — the chest top and the jaw were overlapping.
+  part(torso, 'skin', 0.16, 0.1, 0.17, PAL.skin, 0, 0.36, 0);
+  // Hood bunched at the back of the neck, backpack over it, straps in front.
+  // The camera never leaves his back, so this is the silhouette that counts.
+  part(torso, 'shirtAlt', 0.4, 0.18, 0.2, PAL.shirtAlt, 0, 0.46, -0.19);
+  // Slung low deliberately: worn high, pitching the torso forward for a
+  // duck-slide swings the pack up over his head and it, not the head,
+  // becomes the tallest thing on the rig.
+  part(torso, 'pack', 0.4, 0.36, 0.16, PAL.pack, 0, 0.18, -0.24);
+  part(torso, 'packStrap', 0.08, 0.4, 0.06, PAL.packStrap, 0.15, 0.26, 0.18);
+  part(torso, 'packStrap', 0.08, 0.4, 0.06, PAL.packStrap, -0.15, 0.26, 0.18);
+
+  // Head group, so it can turn independently of the shoulders.
+  // 0.39, not 0.43: a tilted box's world-space AABB is taller than the box,
+  // so the pitch in the ride pose pushed the measured crown over
+  // STAND_HEIGHT. Tuned against the measurement, not the arithmetic.
+  const head = new THREE.Group();
+  head.position.y = 0.44;
+  head.rotation.y = -0.52;              // cancels the body yaw: eyes forward
+  torso.add(head);
+  part(head, 'skin', 0.33, 0.26, 0.32, PAL.skin, 0, 0.13, 0);
+  part(head, 'hair', 0.35, 0.06, 0.34, PAL.hair, 0, 0.225, 0);
+  part(head, 'cap', 0.36, 0.08, 0.35, PAL.cap, 0, 0.275, 0);
+  // Brim pointing backwards — the cap is on back-to-front.
+  part(head, 'cap', 0.32, 0.05, 0.18, PAL.cap, 0, 0.25, -0.25);
+
+  /**
+   * Two-bone limb: pivot at the joint, a second pivot at the knee/elbow, and
+   * an end box for the shoe or hand. Rotating the upper pivot swings the
+   * whole limb; rotating the lower one folds it. A single box could do
+   * neither, which is why the old crouch had to be a scale squash.
+   */
+  function limb(parent, cfg) {
+    const upper = new THREE.Group();
+    upper.position.set(cfg.x, cfg.y, cfg.z);
+    part(upper, cfg.upperSlot, cfg.upperW, cfg.upperH, cfg.upperD,
+         cfg.upperHex, 0, -cfg.upperH / 2, 0);
+
+    const lower = new THREE.Group();
+    lower.position.y = -cfg.upperH;
+    part(lower, cfg.lowerSlot, cfg.lowerW, cfg.lowerH, cfg.lowerD,
+         cfg.lowerHex, 0, -cfg.lowerH / 2, 0);
+    upper.add(lower);
+
+    const end = new THREE.Group();
+    end.position.y = -cfg.lowerH;
+    part(end, cfg.endSlot, cfg.endW, cfg.endH, cfg.endD,
+         cfg.endHex, 0, -cfg.endH / 2, cfg.endZ || 0);
+    if (cfg.soleSlot) {
+      part(end, cfg.soleSlot, cfg.endW * 1.04, 0.05, cfg.endD * 1.02,
+           cfg.soleHex, 0, -cfg.endH + 0.02, cfg.endZ || 0);
+    }
+    lower.add(end);
+
+    parent.add(upper);
+    return { upper, lower, end };
   }
-  const legL = limb(0.21, 0.46, 0.24, PAL.pants, 0.16, 0.71, -0.16);
-  const legR = limb(0.21, 0.46, 0.24, PAL.pants, -0.16, 0.71, 0.2);
-  const armL = limb(0.15, 0.44, 0.17, PAL.skin, 0.36, 1.18, 0);
-  const armR = limb(0.15, 0.44, 0.17, PAL.skin, -0.36, 1.18, 0);
+
+  // Feet staggered along the board over the trucks rather than side by side.
+  // Lower legs are wider than thighs, so the trousers read as baggy.
+  const legCfg = {
+    upperSlot: 'pants', upperW: 0.23, upperH: THIGH, upperD: 0.26, upperHex: PAL.pants,
+    lowerSlot: 'pants', lowerW: 0.26, lowerH: SHIN, lowerD: 0.29, lowerHex: PAL.pants,
+    endSlot: 'shoes', endW: 0.27, endH: 0.12, endD: 0.42, endHex: PAL.shoes,
+    endZ: 0.05, soleSlot: 'shoeSole', soleHex: PAL.shoeSole,
+  };
+  const legL = limb(hips, { ...legCfg, x: 0.1, y: 0, z: 0.46 });
+  const legR = limb(hips, { ...legCfg, x: -0.08, y: 0, z: -0.44 });
+
+  const armCfg = {
+    upperSlot: 'shirt', upperW: 0.17, upperH: 0.24, upperD: 0.19, upperHex: PAL.shirt,
+    lowerSlot: 'shirtAlt', lowerW: 0.15, lowerH: 0.2, lowerD: 0.17, lowerHex: PAL.shirtAlt,
+    endSlot: 'skin', endW: 0.14, endH: 0.13, endD: 0.14, endHex: PAL.skin,
+  };
+  const armL = limb(torso, { ...armCfg, x: 0.35, y: 0.4, z: 0 });
+  const armR = limb(torso, { ...armCfg, x: -0.35, y: 0.4, z: 0 });
 
   root.add(body);
 
@@ -185,10 +316,39 @@ export function buildPlayer() {
   setShadow(board, true, false);
   setShadow(body, true, false);
 
+  /**
+   * Recolour whole slots at once. `overrides` is slot → hex; anything absent
+   * falls back to the palette default, so calling this with `{}` restores the
+   * stock rider. Materials come from the same `mat()` cache as everything
+   * else, so repeated swaps allocate nothing new.
+   */
+  const SLOT_DEFAULTS = {
+    skin: PAL.skin, hair: PAL.hair, shirt: PAL.shirt, shirtAlt: PAL.shirtAlt,
+    pants: PAL.pants, shoes: PAL.shoes, shoeSole: PAL.shoeSole, cap: PAL.cap,
+    pack: PAL.pack, packStrap: PAL.packStrap,
+    deck: PAL.deck, grip: PAL.grip, trucks: PAL.truck, wheels: PAL.wheel,
+  };
+
+  function applySkin(overrides = {}) {
+    for (const slot of Object.keys(slots)) {
+      const hex = overrides[slot] !== undefined
+        ? overrides[slot]
+        : SLOT_DEFAULTS[slot];
+      if (hex === undefined) continue;
+      for (const mesh of slots[slot]) mesh.material = mat(hex);
+    }
+  }
+
+  /** Recolour a single slot, leaving the rest alone. */
+  function setSlot(slot, hex) {
+    for (const mesh of slots[slot] || []) mesh.material = mat(hex);
+  }
+
   return {
-    root, board, deck, wheels, body,
+    root, board, deck, wheels, body, hipRoot, hips,
     legL, legR, torso, armL, armR, head,
     shield, hoverRing, magnetRing,
+    slots, applySkin, setSlot,
   };
 }
 
@@ -232,14 +392,21 @@ export function buildObstacle(type) {
     // bar so the ride surface can't drift from the mesh.
     const len = CFG.RAIL_LEN;
     const half = len / 2;
-    addBox(g, 1.7, 0.3, len, PAL.rail, 0, 1.6, 0);
+    const w = CFG.RAIL_WIDTH;                 // 0.26 — a handrail, not a ledge
+    const top = CFG.RAIL_RIDE_Y;              // 1.75, where the board sits
+    // A square handrail. It was 1.7 wide, against a 0.72 deck — nearly two
+    // and a half board-widths, which is why it read as a platform to stand on
+    // rather than something to grind.
+    addBox(g, w, w, len, PAL.rail, 0, top - w / 2, 0);
     for (let z = -half; z <= half + 0.01; z += 6) {
-      addBox(g, 0.18, 1.6, 0.18, PAL.overhangPost, 0, 0.8, z);
+      addBox(g, 0.14, top - w, 0.14, PAL.overhangPost, 0, (top - w) / 2, z);
+      // Base plate, so the posts are visibly bolted down rather than floating.
+      addBox(g, 0.34, 0.08, 0.34, PAL.overhangPost, 0, 0.04, z);
     }
     g.userData = {
-      type, hx: 0.85, hz: half, yMin: 0, yMax: 1.9,
+      type, hx: w / 2 + 0.07, hz: half, yMin: 0, yMax: top + 0.08,
       grindable: true,
-      rideY: 1.6 + 0.3 / 2,
+      rideY: top,
     };
   }
 
