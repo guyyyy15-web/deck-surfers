@@ -11,9 +11,15 @@
 
 import * as THREE from '../vendor/three.module.min.js';
 import { PAL, CFG } from './config.js';
+import {
+  asphaltTexture, sidewalkTexture, buildingTexture, BUILDING_VARIANTS,
+} from './textures.js';
 
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
-const COIN_GEO = new THREE.CylinderGeometry(0.42, 0.42, 0.12, 6);
+// 12 sides rather than 6: still visibly faceted, but it catches the light as
+// it spins instead of flicking between three flat shades.
+const COIN_GEO = new THREE.CylinderGeometry(0.42, 0.42, 0.1, 12);
+const COIN_FACE_GEO = new THREE.CylinderGeometry(0.29, 0.29, 0.14, 12);
 const GEM_GEO = new THREE.OctahedronGeometry(0.42, 0);
 
 const matCache = new Map();
@@ -29,10 +35,43 @@ export function mat(hex, opts) {
   return m;
 }
 
+/**
+ * Cached material carrying a texture. Kept separate from `mat()` because that
+ * one is keyed by colour alone, and two surfaces can share a colour while
+ * needing different maps or tiling.
+ */
+const texMatCache = new Map();
+
+export function texMat(hex, maps, opts) {
+  const key = `${hex}|${maps.map ? maps.map.uuid : '-'}|${maps.emissiveMap ? maps.emissiveMap.uuid : '-'}|${opts ? JSON.stringify(opts) : ''}`;
+  let m = texMatCache.get(key);
+  if (!m) {
+    m = new THREE.MeshLambertMaterial({
+      color: hex,
+      flatShading: true,
+      map: maps.map || null,
+      emissiveMap: maps.emissiveMap || null,
+      emissive: maps.emissiveMap ? new THREE.Color(maps.emissive ?? 0xffffff) : new THREE.Color(0x000000),
+      ...opts,
+    });
+    texMatCache.set(key, m);
+  }
+  return m;
+}
+
 /** A box of the given size/colour, built from the shared unit geometry. */
 export function makeMesh(w, h, d, hex, opts) {
   const m = new THREE.Mesh(UNIT_BOX, mat(hex, opts));
   m.scale.set(w, h, d);
+  return m;
+}
+
+/** As makeMesh, but with a texture map (and optionally an emissive one). */
+function addTexBox(parent, w, h, d, hex, maps, x, y, z) {
+  const m = new THREE.Mesh(UNIT_BOX, texMat(hex, maps));
+  m.scale.set(w, h, d);
+  m.position.set(x, y, z);
+  parent.add(m);
   return m;
 }
 
@@ -187,26 +226,53 @@ export function buildObstacle(type) {
     }
     g.userData = { type, hx: 0.9, hz: 0.9, yMin: 0, yMax: 1.0, harmless: true };
   } else if (type === 'rail') {
-    addBox(g, 1.7, 0.3, 7, PAL.rail, 0, 1.6, 0);
-    addBox(g, 0.18, 1.6, 0.18, PAL.overhangPost, 0, 0.8, 3);
-    addBox(g, 0.18, 1.6, 0.18, PAL.overhangPost, 0, 0.8, -3);
-    addBox(g, 0.18, 1.6, 0.18, PAL.overhangPost, 0, 0.8, 0);
-    g.userData = { type, hx: 0.85, hz: 3.5, yMin: 0, yMax: 1.9 };
+    // Long enough to actually grind — see CFG.RAIL_LEN. The bar is lethal
+    // from the side; landing on top of it is what collision.js treats
+    // specially, and `rideY` is derived from the same numbers that draw the
+    // bar so the ride surface can't drift from the mesh.
+    const len = CFG.RAIL_LEN;
+    const half = len / 2;
+    addBox(g, 1.7, 0.3, len, PAL.rail, 0, 1.6, 0);
+    for (let z = -half; z <= half + 0.01; z += 6) {
+      addBox(g, 0.18, 1.6, 0.18, PAL.overhangPost, 0, 0.8, z);
+    }
+    g.userData = {
+      type, hx: 0.85, hz: half, yMin: 0, yMax: 1.9,
+      grindable: true,
+      rideY: 1.6 + 0.3 / 2,
+    };
   }
 
   return setShadow(g, true, true);
 }
 
+/**
+ * A coin is a rim plus a slightly proud inner face, so it reads as struck
+ * metal rather than a flat disc. Both parts are emissive enough to stay
+ * legible once the fog and the darker phases take the ambient light down.
+ */
 export function buildCoin() {
-  const m = new THREE.Mesh(COIN_GEO, mat(PAL.coin));
-  m.rotation.x = Math.PI / 2;
-  m.userData = { type: 'coin' };
-  m.castShadow = true;
-  return m;
+  const g = new THREE.Group();
+
+  const rim = new THREE.Mesh(COIN_GEO, mat(PAL.coin, {
+    emissive: PAL.coinGlow, emissiveIntensity: 0.45,
+  }));
+  g.add(rim);
+
+  const face = new THREE.Mesh(COIN_FACE_GEO, mat(PAL.coinFace, {
+    emissive: PAL.coinGlow, emissiveIntensity: 0.7,
+  }));
+  g.add(face);
+
+  g.rotation.x = Math.PI / 2;
+  g.userData = { type: 'coin' };
+  return setShadow(g, true, false);
 }
 
 export function buildGem() {
-  const m = new THREE.Mesh(GEM_GEO, mat(PAL.gem));
+  const m = new THREE.Mesh(GEM_GEO, mat(PAL.gem, {
+    emissive: PAL.gem, emissiveIntensity: 0.5,
+  }));
   m.userData = { type: 'gem' };
   m.castShadow = true;
   return m;
@@ -232,12 +298,28 @@ export function buildScenery(kind, rng) {
     const h = rng.range(7, 18);
     const w = rng.range(2.4, 4.2);
     const colour = rng.pick(PAL.building);
-    addBox(g, w, h, w, colour, 0, h / 2, 0);
-    // Window bands — flat emissive-looking stripes, no textures.
-    const bands = Math.floor(h / 2.2);
-    for (let i = 1; i <= bands; i++) {
-      addBox(g, w * 1.02, 0.28, w * 0.5, PAL.window, 0, i * 2.2, 0);
-      addBox(g, w * 0.5, 0.28, w * 1.02, PAL.window, 0, i * 2.2, 0);
+    const variant = rng.int(BUILDING_VARIANTS);
+    const tex = buildingTexture(variant);
+
+    // One textured box instead of the old stack of window-band boxes. That is
+    // both far more detail *and* fewer draw calls — a tall tower used to cost
+    // up to 17 meshes and now costs one, plus its roof furniture. Lit windows
+    // live in the emissive map because a colour map can only darken.
+    addTexBox(g, w, h, w, colour, {
+      map: tex.map,
+      emissiveMap: tex.emissiveMap,
+      emissive: PAL.window,
+    }, 0, h / 2, 0);
+
+    // Roof furniture, for silhouette variety against the sky.
+    const roof = rng.int(3);
+    if (roof === 0) {
+      addBox(g, w * 0.34, 0.9, w * 0.34, PAL.overhangPost, w * 0.22, h + 0.45, -w * 0.18);
+    } else if (roof === 1) {
+      addBox(g, 0.12, rng.range(1.4, 2.8), 0.12, PAL.overhangPost, 0, h + 1.2, 0);
+      addBox(g, 0.7, 0.12, 0.12, PAL.overhangPost, 0, h + 1.9, 0);
+    } else {
+      addBox(g, w * 0.8, 0.28, w * 0.8, PAL.curb, 0, h + 0.14, 0);
     }
   } else if (kind === 'lamp') {
     addBox(g, 0.2, 4.2, 0.2, PAL.curb, 0, 2.1, 0);
@@ -258,9 +340,31 @@ export function buildGroundSlab(shadeAlt) {
   const g = new THREE.Group();
   const len = CFG.SLAB_LEN;
 
-  addBox(g, 9, 0.5, len, shadeAlt ? PAL.groundAlt : PAL.ground, 0, -0.25, 0);
+  // Road surface. The texture is greyscale detail multiplied by the palette
+  // colour, so the alternating slab shades still work.
+  addTexBox(
+    g, 9, 0.5, len, shadeAlt ? PAL.groundAlt : PAL.ground,
+    // Tiled finely: a coarse tile puts metre-wide blotches right under the
+    // camera, where the road is most magnified.
+    { map: asphaltTexture(3, Math.round(len / 2.5)) },
+    0, -0.25, 0
+  );
+
   addBox(g, 0.5, 0.55, len, PAL.curb, 4.5, 0.02, 0);
   addBox(g, 0.5, 0.55, len, PAL.curb, -4.5, 0.02, 0);
+
+  // Pavements and the ground beyond them. These matter more than they look:
+  // without them the road was a 9-unit ribbon with nothing either side, which
+  // is most of why the world read as empty. Four boxes per slab buy a street
+  // that has edges.
+  for (const side of [-1, 1]) {
+    addTexBox(
+      g, 4.4, 0.44, len, PAL.pavement,
+      { map: sidewalkTexture(1, Math.round(len / 6)) },
+      side * 6.95, -0.08, 0
+    );
+    addBox(g, 14, 0.4, len, PAL.verge, side * 16, -0.4, 0);
+  }
 
   const stripes = Math.floor(len / CFG.STRIPE_GAP);
   for (let i = 0; i < stripes; i++) {

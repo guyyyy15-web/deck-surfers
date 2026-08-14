@@ -123,6 +123,18 @@ export function checkCollisions(player, track, distance, ctx) {
       }
       continue;
     }
+
+    // A rail is a wall from the side and a ride from above. Nothing else
+    // changes: if neither of these applies it falls through to the lethal
+    // path below, which is what keeps grinding a risk rather than a tunnel.
+    if (ud.grindable) {
+      if (player.isGrinding(m)) continue;
+      if (player.canGrind() && player.vy <= 0 && box.minY >= ud.rideY - player.grindSnap) {
+        ctx.onGrind(m);
+        continue;
+      }
+    }
+
     ctx.onHit(m);
     return;   // one lethal contact is enough
   }

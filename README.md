@@ -6,8 +6,9 @@ upgrades that last exactly one run.
 **Play: https://guyyyy15-web.github.io/deck-surfers/**
 
 No build step, no package manager, no binary assets. Every model is
-procedural boxes, every sound — including the music — is synthesised at
-runtime, and the only dependency, three.js, is vendored into the repo.
+procedural boxes, every texture is painted into a canvas at boot, every sound
+— including the music — is synthesised at runtime, and the only dependency,
+three.js, is vendored into the repo.
 
 ## Running it locally
 
@@ -25,6 +26,7 @@ python3 -m http.server 8000
 | Change lane | `←` `→` or `A` `D` | swipe left / right |
 | Ollie / jump | `↑`, `W`, `Space` | swipe up, or tap |
 | Duck & slide | `↓`, `S` | swipe down |
+| Grind a rail | land on top of one | land on top of one |
 | Pick an upgrade | `1` `2` `3` | tap a card |
 | Pause | `Esc`, `P` | — |
 
@@ -47,6 +49,7 @@ together is the best.
 | Event | Combo |
 | --- | --- |
 | Coin | +1 |
+| Grinding | +1 every 0.25s |
 | Near miss | +2 |
 | Ramp | +3 |
 | Gem | +5 |
@@ -56,6 +59,27 @@ not enough: either you were still cutting across as you went by, or you were
 in its lane and got over or under it by less than half a unit. Wiping out or
 spending a shield ends the chain; letting it lapse costs nothing already
 banked.
+
+### Grinding
+
+Ollie onto a rail and you ride it. Grinding pays 220 points a second — before
+the combo multiplier — and ticks the combo every quarter second, so a full
+rail is worth roughly four coins on top of the points. Step off by jumping,
+carving into another lane, pressing down, or simply running out of rail.
+
+**The rail is still a wall.** It is only survivable from directly above: you
+have to be falling, with your feet at bar height. Come at it any other way and
+it kills you exactly as it always did. That risk is the whole reason a grind
+is worth points.
+
+Rails are 24 units long — at the old 7 a grind lasted 0.14s at full speed,
+which is a bump, not a trick. At 24 it runs 0.5–0.9s across the speed range.
+Rails also reserve road behind them so no obstacle can appear mid-grind, in a
+lane you are locked into.
+
+Rails stay dodge-only in the track planner, so **every rail row still
+guarantees a clear lane elsewhere** and grinding is purely an optional bonus
+route. That is what lets the fairness proof below stay exactly as it was.
 
 ### Phases
 
@@ -90,12 +114,25 @@ board. Only your best score and best distance are saved.
 | Magnet Deck | Pulls coins in from further away |
 | Double Jump | A second (then third) mid-air jump |
 | Hot Streak | Score multiplier, ×1.5 per stack |
-| Hover Deck | Float above the road and fall slowly — but duck lower |
+| Hover Deck | Float above the road and fall slowly — but ducking drops you |
 | Guard Rail | Survive a crash, once per stack |
 | Gold Grip | Coins are worth more |
 | Slow Burn | The street speeds up more gently |
 | Moon Boots | Much higher ollies |
 | Air Brake | Hold a duck-slide for longer |
+| Rail Rider | Grinds score double, and rails are easier to catch |
+| Long Fuse | The combo survives longer between hits |
+| Daredevil | Near misses are worth more and build combo faster |
+| Second Wind | Get back up once after a wipeout |
+| **Overdrive** | Big score multiplier — *but the street speeds up hard* |
+| **Glass Cannon** | Score ×2.5 — *but every shield and revive is stripped* |
+
+The last two are the interesting ones. Every other card is a straight gain, so
+picking is easy; a card that costs you something is a card you have to think
+about. Because effects are pure folds applied in a fixed order, Glass Cannon
+strips your shields whichever order you picked the two in — the stats are
+rebuilt from scratch every time, so there is no "which came first" to get
+wrong.
 
 ## Code layout
 
@@ -105,14 +142,15 @@ Each module owns one thing:
 | --- | --- |
 | `js/config.js` | Every tunable constant, the colour palette and the phases |
 | `js/rng.js` | Seeded PRNG (makes the track self-test reproducible) |
+| `js/textures.js` | Canvas-painted textures — asphalt, paving, towers, cloud |
 | `js/voxel.js` | All mesh construction, from one shared box geometry |
 | `js/world.js` | Renderer, scene, camera, lights, sky, scrolling road |
 | `js/input.js` | Keyboard + touch → semantic actions |
-| `js/player.js` | **Player controller** — lanes, jump arc, duck, animation |
+| `js/player.js` | **Player controller** — lanes, jump arc, duck, grind, animation |
 | `js/track.js` | **Track generator** — rows, pooling, fairness validator |
 | `js/upgrades.js` | **Upgrade manager** — registry, rolling, stats folding |
 | `js/ui.js` | **UI renderer** — screens, HUD, cards, summary |
-| `js/collision.js` | AABB tests and the coin magnet |
+| `js/collision.js` | AABB tests, near misses, grind mounting, the coin magnet |
 | `js/fx.js` | Pooled particles, trails, screen shake |
 | `js/audio.js` | Synthesised SFX and the music loop |
 | `js/game.js` | State machine, run state, scoring, main loop |
@@ -124,14 +162,32 @@ Each module owns one thing:
 and real `PCFSoftShadowMap` shadows. The sun's shadow frustum is deliberately
 tight and follows the player, because a wide one spends its resolution on
 empty asphalt. The chunky look comes from the geometry being boxes, not from
-throwing pixels away. If a device can't hold 45fps, resolution and shadow
-quality step down — one way only, so they can't oscillate.
+throwing pixels away. If a device can't hold 45fps, resolution, shadow quality
+and sky detail step down — one way only, so they can't oscillate.
 
-**The sky** is a vertical gradient on the inside of a sphere, with `scene.fog`
-matched to the horizon band so the street dissolves into it. Being a raw
-`ShaderMaterial` it needs `#include <colorspace_fragment>`; without that the
-colours land linear on an sRGB framebuffer and read far darker and redder
-than the palette says.
+**Textures are painted, not loaded.** `js/textures.js` draws asphalt, paving
+and tower faces into canvases at boot, so the repo still ships zero binary
+assets. Three rules keep them from fighting the voxel look: `NearestFilter`
+everywhere, because smooth filtering next to hard-edged geometry looks like a
+mistake; colour maps are greyscale *detail* multiplied by the palette, so
+`config.js` still decides every hue; and anything that must be brighter than
+its surface — lit windows — goes in an emissive map, since a colour map can
+only darken.
+
+This made the game *cheaper*, not dearer. A tower used to be a box plus up to
+sixteen window-band boxes; it is now one textured box plus a bit of roof
+furniture, which took a typical frame from ~470 draw calls to ~290.
+
+**The sky** is a gradient on the inside of a sphere, plus a sun disc with
+bloom, hash-based stars and a drifting cloud layer sampled from a baked
+texture — all per-phase, and all in one shader, so the whole sky costs a
+single draw call. Two things are easy to get wrong here. Being a raw
+`ShaderMaterial` it needs `#include <colorspace_fragment>`, or the colours
+land linear on an sRGB framebuffer and read far darker and redder than the
+palette says. And it is drawn with `renderOrder` *after* the opaque scene
+rather than before it, so the depth buffer can reject the pixels the city
+already covers — it is the only full-screen shader in the game and it is
+worth not paying for it twice.
 
 **Music** is a 90 BPM boom-bap loop built from oscillators and one noise
 buffer — kick, snare, hats, sub bass and a minor-key stab. Timing uses a

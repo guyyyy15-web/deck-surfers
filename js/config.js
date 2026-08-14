@@ -98,6 +98,27 @@ export const CFG = Object.freeze({
   COMBO_NEAR_MISS: 2,
   COMBO_MILESTONE: 25,      // burst + popup every N points
 
+  // ---- rails & grinding ----
+  // A grind lasts RAIL_LEN / speed seconds. At the old 7-unit length that was
+  // 0.14s at full speed — over before the player registered it. 24 units puts
+  // it at 0.5–0.9s across the whole speed range, which is long enough to read
+  // as a trick rather than a bump.
+  RAIL_LEN: 24,
+  RAIL_HALF_LEN: 12,
+  RAIL_RIDE_Y: 1.75,        // bar centre 1.6 + half its 0.3 height
+  // Landing tolerance. The jump arc is above the rail while descending for
+  // only ~0.19s, but the player may attach anywhere along the rail's length,
+  // so the real window is the whole traversal. This just softens the edge.
+  GRIND_SNAP: 0.35,
+  // After stepping off deliberately the player is still directly above the
+  // bar and descending, which is exactly the condition for mounting — without
+  // a short lock-out, carving or dropping off would re-latch on the very next
+  // substep and the rail would be impossible to leave.
+  GRIND_REMOUNT_LOCK: 0.3,
+  GRIND_SCORE_PER_SEC: 220,
+  GRIND_MOUNT_SCORE: 40,
+  GRIND_COMBO_INTERVAL: 0.25,   // combo +1 this often while riding
+
   // ---- near miss ----
   // Measured outward from the contact width, so a "dodge" is a lane squeeze
   // that genuinely nearly hit, and a "clear" is a jump or duck that passed
@@ -114,6 +135,10 @@ export const CFG = Object.freeze({
   CHOICE_EVERY_M: 250,       // distance between upgrade choices
   CHOICE_COUNT: 3,           // upgrades offered per choice
   SHIELD_INVULN: 1.3,        // seconds of i-frames after a shield break
+  // Longer than a shield's: a revive leaves the player standing inside the
+  // thing that just killed them, so the i-frames must outlast it scrolling
+  // clear — 1.6s is 80 units even at the absolute speed cap.
+  REVIVE_INVULN: 1.6,
 
   // ---- rendering ----
   // Rendered at full device resolution. The chunky look now comes from the
@@ -169,21 +194,27 @@ export const PHASES = Object.freeze([
   {
     name: 'DOWNTOWN',
     skyTop: 0x150b32, skyHorizon: 0xa84776,
+    sun: 0xffd9a0, stars: 0.0, clouds: 0.55, sunHeight: 0.07, ambient: 1.6,
     weights: { barrier: 3, low: 3, high: 2, ramp: 2, rail: 1 },
   },
   {
     name: 'NIGHT RUN',
     skyTop: 0x060418, skyHorizon: 0x3b2a7a,
+    // A pale moon, a sky full of stars and almost no cloud.
+    sun: 0xdfe6ff, stars: 1.0, clouds: 0.18, sunHeight: 0.22, ambient: 0.85,
     weights: { barrier: 2, low: 2, high: 4, ramp: 1, rail: 2 },
   },
   {
     name: 'SUNRISE',
     skyTop: 0x2b1b4d, skyHorizon: 0xffa45c,
+    // Big low sun, heavy cloud for it to catch.
+    sun: 0xfff0c2, stars: 0.12, clouds: 0.8, sunHeight: 0.03, ambient: 1.75,
     weights: { barrier: 4, low: 2, high: 1, ramp: 3, rail: 2 },
   },
   {
     name: 'OVERPASS',
     skyTop: 0x0d2137, skyHorizon: 0x2fa8a0,
+    sun: 0xc9fff2, stars: 0.35, clouds: 0.45, sunHeight: 0.12, ambient: 1.35,
     weights: { barrier: 2, low: 4, high: 3, ramp: 2, rail: 3 },
   },
 ]);
@@ -201,8 +232,13 @@ export const PAL = Object.freeze({
   skyTop: 0x150b32,
   skyHorizon: 0xa84776,
   sky: 0xa84776,
+  sun: 0xffd9a0,            // the disc itself; per-phase in PHASES
   ground: 0x6f68a6,
   groundAlt: 0x635c96,
+  // Pavements and the ground beyond them. The verge is deliberately darker
+  // than the road so the street reads as raised out of its surroundings.
+  pavement: 0x8d86bf,
+  verge: 0x453d78,
   // Muted, so lane markings never get mistaken for gold pickups.
   stripe: 0xcdc6ee,
   curb: 0xa79ed8,
@@ -217,6 +253,8 @@ export const PAL = Object.freeze({
   wheel: 0x22223b,
 
   coin: 0xffd23f,
+  coinFace: 0xffe98a,       // proud inner face, lighter than the rim
+  coinGlow: 0xffb020,       // emissive, so coins stay legible in NIGHT RUN
   gem: 0x4fd6ff,
   crate: 0xff9f1c,
 

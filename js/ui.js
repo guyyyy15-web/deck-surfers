@@ -110,7 +110,8 @@ export function createUI(handlers) {
 
     // Quantised to 5% steps — a per-frame style write of an unrounded float
     // is exactly the DOM churn this file exists to avoid.
-    const fill = Math.round((run.comboTimer / CFG.COMBO_WINDOW) * 20) / 20;
+    const window_ = run.comboWindowMax || CFG.COMBO_WINDOW;
+    const fill = Math.round((run.comboTimer / window_) * 20) / 20;
     if (fill !== last.comboFill) {
       el.comboFill.style.setProperty('--combo-fill', String(Math.max(0, fill)));
       last.comboFill = fill;

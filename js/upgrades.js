@@ -26,6 +26,13 @@ export const BASE_STATS = Object.freeze({
   coinValue: CFG.COIN_SCORE,
   speedRampScale: 1,
   duckBonus: 0,
+  // ---- added with grinding and the trade-off cards ----
+  grindMult: 1,
+  grindSnap: CFG.GRIND_SNAP,
+  comboWindow: CFG.COMBO_WINDOW,
+  nearMissMult: 1,
+  reviveMax: 0,
+  reviveCharges: 0,
 });
 
 const RARITY_WEIGHT = { common: 5, rare: 3, epic: 1 };
@@ -113,18 +120,96 @@ export const UPGRADES = [
     desc: () => 'Hold a duck-slide for longer',
     fold: (st, lvl) => { st.duckBonus = 0.3 * lvl; },
   },
+
+  /* ---- cards that change how you play, rather than scaling a number ---- */
+
+  {
+    id: 'railRider',
+    name: 'Rail Rider',
+    icon: '🛤️',
+    rarity: 'rare',
+    maxStacks: 2,
+    desc: (lvl) => `Grinds score ×${1 + lvl} and catch rails from further`,
+    fold: (st, lvl) => {
+      st.grindMult = 1 + lvl;
+      st.grindSnap = CFG.GRIND_SNAP + 0.18 * lvl;
+    },
+  },
+  {
+    id: 'comboKeeper',
+    name: 'Long Fuse',
+    icon: '🧨',
+    rarity: 'rare',
+    maxStacks: 2,
+    desc: (lvl) => `Combo survives ${(CFG.COMBO_WINDOW + 0.9 * (lvl + 1)).toFixed(1)}s between hits`,
+    fold: (st, lvl) => { st.comboWindow = CFG.COMBO_WINDOW + 0.9 * lvl; },
+  },
+  {
+    id: 'daredevil',
+    name: 'Daredevil',
+    icon: '😎',
+    rarity: 'common',
+    maxStacks: 3,
+    desc: (lvl) => `Near misses are worth ×${1 + lvl} and build combo faster`,
+    fold: (st, lvl) => { st.nearMissMult = 1 + lvl; },
+  },
+  {
+    id: 'secondWind',
+    name: 'Second Wind',
+    icon: '🌀',
+    rarity: 'epic',
+    maxStacks: 1,
+    // Distinct from Guard Rail: a shield eats a hit and keeps you rolling,
+    // this one catches you after the crash animation has already started.
+    desc: () => 'Get back up once after a wipeout',
+    fold: (st) => { st.reviveMax = 1; },
+  },
+
+  /* ---- trade-offs: these give up something real ---- */
+
+  {
+    id: 'overdrive',
+    name: 'Overdrive',
+    icon: '🔥',
+    rarity: 'rare',
+    maxStacks: 2,
+    desc: (lvl) => `Score ×${(1 + 0.45 * (lvl + 1)).toFixed(2)} — but the street speeds up hard`,
+    fold: (st, lvl) => {
+      st.scoreMult *= 1 + 0.45 * lvl;
+      st.speedRampScale *= Math.pow(1.35, lvl);
+    },
+  },
+  {
+    // Deliberately LAST in this list. `recompute()` folds in array order, so
+    // zeroing the shields here reliably overrides Guard Rail no matter which
+    // order the two were picked in.
+    id: 'glassCannon',
+    name: 'Glass Cannon',
+    icon: '💎',
+    rarity: 'epic',
+    maxStacks: 1,
+    desc: () => 'Score ×2.5 — but every shield and revive is stripped away',
+    fold: (st) => {
+      st.scoreMult *= 2.5;
+      st.shieldMax = 0;
+      st.reviveMax = 0;
+    },
+  },
 ];
 
 /** Fallback so the choice screen always has three cards to show. */
+// Shown once the pool is exhausted, which now takes far longer than it used
+// to. Scaled by distance so a late-run filler card is never an insult — at
+// 6km it banks about 1500 rather than a flat 250.
 const COIN_CACHE = {
   id: 'coinCache',
   name: 'Coin Cache',
   icon: '🎁',
   rarity: 'common',
   maxStacks: Infinity,
-  desc: () => 'Instantly bank 250 points',
+  desc: () => 'Instantly bank a pile of points, scaled to how far you have come',
   fold: () => {},
-  instant: (run) => { run.score += 250; },
+  instant: (run) => { run.score += 250 + run.distance * 0.2; },
 };
 
 const BY_ID = new Map([...UPGRADES, COIN_CACHE].map((u) => [u.id, u]));
@@ -132,6 +217,7 @@ const BY_ID = new Map([...UPGRADES, COIN_CACHE].map((u) => [u.id, u]));
 export function createUpgradeManager(rng) {
   let stacks = {};
   let shieldUsed = 0;
+  let reviveUsed = 0;
   let stats = { ...BASE_STATS };
   const changeHandlers = new Set();
 
@@ -142,9 +228,12 @@ export function createUpgradeManager(rng) {
       const level = stacks[up.id];
       if (level) up.fold(next, level);
     }
-    // Shields are consumable, so derive the remaining charges rather than
-    // storing them (a later recompute would otherwise refill them).
+    // Shields and revives are consumable, so derive the remaining charges
+    // rather than storing them (a later recompute would otherwise refill
+    // them). Note this runs after every fold, so Glass Cannon stripping
+    // shieldMax to 0 correctly leaves zero charges too.
     next.shieldCharges = Math.max(0, next.shieldMax - shieldUsed);
+    next.reviveCharges = Math.max(0, next.reviveMax - reviveUsed);
     stats = next;
     for (const cb of changeHandlers) cb(stats, stacks);
     return stats;
@@ -191,6 +280,14 @@ export function createUpgradeManager(rng) {
     return true;
   }
 
+  /** Returns true if a revive caught the wipeout. */
+  function consumeRevive() {
+    if (stats.reviveCharges <= 0) return false;
+    reviveUsed++;
+    recompute();
+    return true;
+  }
+
   /** Ordered list for the HUD and the game-over summary. */
   function activeList() {
     return UPGRADES.filter((u) => stacks[u.id] > 0).map((u) => ({
@@ -207,6 +304,7 @@ export function createUpgradeManager(rng) {
     // Replace, don't clear — nothing from the previous run can survive.
     stacks = {};
     shieldUsed = 0;
+    reviveUsed = 0;
     stats = { ...BASE_STATS };
     for (const cb of changeHandlers) cb(stats, stacks);
     return stats;
@@ -215,7 +313,7 @@ export function createUpgradeManager(rng) {
   return {
     get stats() { return stats; },
     get stacks() { return stacks; },
-    roll, apply, consumeShield, activeList, reset, recompute,
+    roll, apply, consumeShield, consumeRevive, activeList, reset, recompute,
     onChange(cb) { changeHandlers.add(cb); return () => changeHandlers.delete(cb); },
   };
 }

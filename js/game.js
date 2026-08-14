@@ -42,6 +42,7 @@ function createRunState() {
     // ---- combo ----
     combo: 0,
     comboTimer: 0,
+    comboWindowMax: CFG.COMBO_WINDOW,
     comboBest: 0,
     nextMilestone: CFG.COMBO_MILESTONE,
     phaseIndex: 0,
@@ -126,6 +127,12 @@ export function createGame({ canvas }) {
     run = createRunState();
     run.nextChoiceAt = choiceEvery;
 
+    // The grind loop is the one sound that outlives its trigger, so every
+    // path out of PLAYING has to close it — including restarting mid-grind.
+    audio.stopGrind();
+    grindScore = 0;
+    grindComboAcc = 0;
+
     dyingTimer = 0;
     ui.resetHUD();
     ui.setUpgradeIcons([]);
@@ -143,8 +150,24 @@ export function createGame({ canvas }) {
 
   function die() {
     if (state !== STATE.PLAYING) return;
+
+    // Second Wind catches the wipeout itself, after a shield would already
+    // have failed — so the two upgrades stack rather than overlapping.
+    if (upgrades.consumeRevive()) {
+      player.invuln = CFG.REVIVE_INVULN;
+      fx.burst(player.rig.root.position, PAL.hover, 30, { speed: 6, ttl: 0.9 });
+      fx.addShake(0.35);
+      audio.play('revive');
+      audio.stopGrind();
+      dropCombo(true);
+      ui.popup('SECOND WIND', player.rig.root.position, 'combo');
+      ui.setUpgradeIcons(upgrades.activeList());
+      return;
+    }
+
     state = STATE.DYING;
     dyingTimer = 0.9;
+    audio.stopGrind();
     dropCombo(true);
     player.playDeath();
     fx.burst(player.rig.root.position, PAL.barrier, 26, { speed: 6, ttl: 0.8 });
@@ -191,6 +214,7 @@ export function createGame({ canvas }) {
     state = STATE.CHOICE_PAUSE;
     orbitT = 0;
     input.releaseAll();
+    audio.stopGrind();
     audio.play('choice');
     ui.showChoice(upgrades.roll(CFG.CHOICE_COUNT));
   }
@@ -204,12 +228,14 @@ export function createGame({ canvas }) {
     ui.setUpgradeIcons(upgrades.activeList());
     ui.showHUD();
     state = STATE.PLAYING;
+    if (player.isGrinding()) audio.startGrind();
   }
 
   function pause() {
     if (state !== STATE.PLAYING) return;
     state = STATE.PAUSED;
     input.releaseAll();
+    audio.stopGrind();
     ui.showScreen('paused');
   }
 
@@ -217,6 +243,7 @@ export function createGame({ canvas }) {
     if (state !== STATE.PAUSED) return;
     state = STATE.PLAYING;
     ui.showHUD();
+    if (player.isGrinding()) audio.startGrind();
   }
 
   /* ---------------- combo ---------------- */
@@ -229,7 +256,10 @@ export function createGame({ canvas }) {
   /** Feed the combo and refresh its window. */
   function bumpCombo(points) {
     run.combo += points;
-    run.comboTimer = CFG.COMBO_WINDOW;
+    // Long Fuse widens the window, so the meter has to remember what "full"
+    // means for this run rather than assuming the base value.
+    run.comboWindowMax = upgrades.stats.comboWindow;
+    run.comboTimer = run.comboWindowMax;
     if (run.combo > run.comboBest) run.comboBest = run.combo;
 
     while (run.combo >= run.nextMilestone) {
@@ -239,6 +269,44 @@ export function createGame({ canvas }) {
       audio.play('comboUp', { semitones: Math.min(12, run.combo / CFG.COMBO_MILESTONE * 2) });
       ui.popup(`×${comboMult(run.combo).toFixed(1)}`, player.rig.root.position, 'combo');
     }
+  }
+
+  // Accumulated across a single grind, so the dismount popup can report what
+  // the whole trick was worth.
+  let grindScore = 0;
+  let grindComboAcc = 0;
+
+  /**
+   * Ride the rail: score accrues per second and the combo ticks, so a long
+   * grind is worth roughly a coin every quarter second on top of the points.
+   */
+  function updateGrind(dt) {
+    if (!player.isGrinding()) return;
+
+    const points = CFG.GRIND_SCORE_PER_SEC * dt * upgrades.stats.grindMult;
+    award(points);
+    grindScore += points;
+
+    grindComboAcc += dt;
+    while (grindComboAcc >= CFG.GRIND_COMBO_INTERVAL) {
+      grindComboAcc -= CFG.GRIND_COMBO_INTERVAL;
+      bumpCombo(1);
+    }
+
+    // Sparks off the trucks. Reuses the board-trail emitter, just tinted and
+    // lifted to the height of the bar.
+    trailPos.set(player.x, player.y + 0.05, 0);
+    fx.trail(trailPos, PAL.multi, 40, dt);
+  }
+
+  /** Close out a grind however it ended, and report what it was worth. */
+  function finishGrind() {
+    audio.stopGrind();
+    if (grindScore >= 1) {
+      ui.popup(`GRIND +${Math.round(grindScore)}`, player.rig.root.position, 'grind');
+    }
+    grindScore = 0;
+    grindComboAcc = 0;
   }
 
   /** The combo lapsed. Nothing is taken away — it was banked as it was earnt. */
@@ -285,10 +353,22 @@ export function createGame({ canvas }) {
       audio.play('ramp');
       ui.popup(`AIR +${CFG.RAMP_BONUS}`, m.position, 'ramp');
     },
+    /** Landed on top of a rail. collision.js has already vetted the approach. */
+    onGrind(m) {
+      if (!player.startGrind(m)) return;
+      grindScore = 0;
+      grindComboAcc = 0;
+      award(CFG.GRIND_MOUNT_SCORE);
+      grindScore += CFG.GRIND_MOUNT_SCORE;
+      fx.burst(player.rig.root.position, PAL.rail, 14, { speed: 4, ttl: 0.4 });
+      audio.play('grindOn');
+      audio.startGrind();
+    },
     /** A dodge or a clearance that came genuinely close. See collision.js. */
     onNearMiss(m, kind) {
-      award(CFG.NEAR_MISS_SCORE);
-      bumpCombo(CFG.COMBO_NEAR_MISS);
+      const mult = upgrades.stats.nearMissMult;
+      award(CFG.NEAR_MISS_SCORE * mult);
+      bumpCombo(CFG.COMBO_NEAR_MISS * mult);
       audio.play('nearMiss');
       ui.popup(kind === 'clear' ? 'CLEAR!' : 'CLOSE!', m.position, 'near');
     },
@@ -378,6 +458,11 @@ export function createGame({ canvas }) {
       if (run.comboTimer <= 0) dropCombo(false);
     }
 
+    // A grind can end inside player.update (ran out of rail) or from input
+    // (jumped, carved, or dropped off), so the transition is detected here
+    // rather than in any one of those places.
+    const wasGrinding = player.isGrinding();
+
     player.update(dt, input.isHeld('duck'));
     track.update(dt, run.speed, run.distance);
     world.updateGround(run.distance);
@@ -385,8 +470,12 @@ export function createGame({ canvas }) {
     magnetPass(player, track.collectibles, stats.magnetRadius, run.distance, dt);
     checkCollisions(player, track, run.distance, collisionCtx);
 
-    // Board trail — colour follows the active upgrades.
-    if (player.grounded && !player.state.dead) {
+    updateGrind(dt);
+    if (wasGrinding && !player.isGrinding()) finishGrind();
+
+    // Board trail — colour follows the active upgrades. Grinding has its own
+    // sparks, so this would only double up.
+    if (player.grounded && !player.state.dead && !player.isGrinding()) {
       trailPos.set(player.x, 0.05, 0);
       fx.trail(trailPos, player.trailColour(upgrades.stacks), 26, dt);
     }

@@ -109,9 +109,19 @@ export function createAudio() {
       tone({ type: 'square', from: 1175, to: 1175, dur: 0.1, gain: 0.2, delay: 0.06 });
     },
     comboDrop: () => tone({ type: 'triangle', from: 520, to: 240, dur: 0.16, gain: 0.14 }),
+    // The clack of trucks landing on the bar.
+    grindOn: () => {
+      noise({ dur: 0.07, gain: 0.3, freq: 1800, q: 2 });
+      tone({ type: 'square', from: 300, to: 200, dur: 0.06, gain: 0.16 });
+    },
     phase: () => {
       tone({ type: 'sine', from: 330, to: 660, dur: 0.35, gain: 0.2 });
       tone({ type: 'sine', from: 495, to: 990, dur: 0.35, gain: 0.14, delay: 0.05 });
+    },
+    revive: () => {
+      tone({ type: 'sine', from: 220, to: 880, dur: 0.5, gain: 0.3 });
+      tone({ type: 'square', from: 440, to: 1320, dur: 0.4, gain: 0.16, delay: 0.08 });
+      noise({ dur: 0.4, gain: 0.22, freq: 3000, q: 2 });
     },
     choice: () => tone({ type: 'square', from: 660, to: 990, dur: 0.1, gain: 0.24 }),
     upgrade: () => {
@@ -127,6 +137,52 @@ export function createAudio() {
    * up as a combo builds, which makes a long chain audible without the
    * player having to watch the HUD. Existing callers pass nothing.
    */
+  /* ------------------------------------------------------------------ */
+  /* Sustained grind                                                     */
+  /* ------------------------------------------------------------------ */
+
+  // Every other sound here is a one-shot. A grind has to last as long as the
+  // player is on the rail, so it is a looping noise source held open between
+  // startGrind and stopGrind, gain-ramped at both ends so it can't click.
+  let grindNodes = null;
+
+  function startGrind() {
+    if (!ctx || muted || grindNodes) return;
+    const t0 = ctx.currentTime;
+
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuffer;
+    src.loop = true;
+
+    const band = ctx.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.value = 2100;
+    band.Q.value = 3.5;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.16, t0 + 0.04);
+
+    src.connect(band).connect(g).connect(master);
+    src.start(t0);
+    grindNodes = { src, gain: g };
+  }
+
+  function stopGrind() {
+    if (!grindNodes) return;
+    const { src, gain } = grindNodes;
+    grindNodes = null;
+    if (!ctx) return;
+    const t0 = ctx.currentTime;
+    // Ramp down rather than cutting, then stop once silent.
+    gain.gain.cancelScheduledValues(t0);
+    gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.06);
+    try {
+      src.stop(t0 + 0.08);
+    } catch (e) { /* already stopped */ }
+  }
+
   function play(name, opts) {
     if (!ctx || muted) return;
     const fn = SOUNDS[name];
@@ -328,6 +384,8 @@ export function createAudio() {
     unlock,
     play,
     setMuted,
+    startGrind,
+    stopGrind,
     startMusic,
     stopMusic,
     setMusicLevel,
