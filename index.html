@@ -65,7 +65,15 @@
         <span id="hud-distance">0m</span>
         <span class="hud-coins"><i class="coin-dot"></i><span id="hud-coins">0</span></span>
       </div>
+
+      <div class="combo" id="hud-combo" data-tier="0" hidden>
+        <div class="combo-mult" id="hud-combo-mult">&times;1.0</div>
+        <div class="combo-bar"><i id="hud-combo-fill"></i></div>
+      </div>
     </div>
+
+    <div class="phase-banner" id="phase-banner" aria-hidden="true"></div>
+    <div class="popups" id="popups"></div>
 
     <div class="hud-upgrades" id="hud-upgrades" aria-label="Active upgrades"></div>
 
@@ -88,10 +96,12 @@
       <h2 class="over-title">WIPEOUT</h2>
 
       <div class="over-score" id="over-score">0</div>
+      <div class="new-best" id="over-newbest" hidden>NEW BEST</div>
 
       <div class="summary">
         <div class="sum-row"><span>DISTANCE</span><b id="over-distance">0m</b></div>
         <div class="sum-row"><span>COINS</span><b id="over-coins">0</b></div>
+        <div class="sum-row"><span>BEST COMBO</span><b id="over-combo">0</b></div>
         <div class="sum-row"><span>BEST</span><b id="over-best">0</b></div>
       </div>
 

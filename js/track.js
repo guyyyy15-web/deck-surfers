@@ -10,7 +10,7 @@
  * frame, so nothing is allocated once the pools are warm.
  */
 
-import { CFG, LANES } from './config.js';
+import { CFG, LANES, phaseFor } from './config.js';
 import { createPool } from './pool.js';
 import { buildObstacle, buildCoin, buildGem, buildCrate, buildScenery } from './voxel.js';
 
@@ -126,22 +126,43 @@ export function createTrackGenerator(scene, rng) {
     return Math.min(5, Math.floor(distance / CFG.TIER_SIZE));
   }
 
-  function rowGapTime(tier) {
-    const t = Math.min(1, tier / 5);
-    return CFG.ROW_GAP_TIME_START + (CFG.ROW_GAP_TIME_MIN - CFG.ROW_GAP_TIME_START) * t;
+  /**
+   * How hard the street should be right now. Ramps 0→1 over
+   * DIFFICULTY_DISTANCE and then keeps climbing, unbounded, so there is no
+   * distance at which the game stops getting harder. Everything that paces a
+   * row — density and gap — reads from this rather than from the capped tier.
+   */
+  function intensity(distance) {
+    const ramp = Math.min(1, distance / CFG.DIFFICULTY_DISTANCE);
+    const endless = Math.max(0, (distance - CFG.DIFFICULTY_DISTANCE) / CFG.ENDLESS_PERIOD);
+    return ramp + endless;
+  }
+
+  function rowGapTime(inten) {
+    const t = Math.min(1, inten);
+    const base = CFG.ROW_GAP_TIME_START + (CFG.ROW_GAP_TIME_MIN - CFG.ROW_GAP_TIME_START) * t;
+    // Past the ramp the gap keeps tightening, but only down to a floor a
+    // human can still act inside.
+    const endless = Math.max(0, inten - 1) * 0.06;
+    return Math.max(CFG.ROW_GAP_TIME_FLOOR, base - endless);
   }
 
   /**
    * Plan one row. Pure: no meshes, no scene access — just lane slots.
    * Returns { slots, passable, requiredJump, repaired }.
    */
-  function planRow(worldZ, tier, speed, state) {
+  function planRow(worldZ, tier, speed, state, inten = 1, phase = null) {
     const gapTime = speed > 0 ? (worldZ - state.prevRowZ) / speed : 1;
     const maxShift = Math.max(0, Math.min(2, Math.floor(gapTime / CFG.LANE_SETTLE)));
     const allowJump = !state.prevRequiredJump || gapTime >= CFG.JUMP_ROW_MIN_GAP;
 
     const types = typesForTier(tier);
-    const density = 0.4 + Math.min(1, tier / 5) * 0.45;
+    const density = Math.min(CFG.DENSITY_MAX, 0.4 + inten * 0.45);
+    // The phase re-biases which of the *already unlocked* types get picked,
+    // so a phase can never smuggle in an obstacle the tier hasn't reached.
+    const pickType = phase
+      ? () => rng.weighted(types, (t) => phase.weights[t] || 1)
+      : () => rng.pick(types);
 
     // Start from a lane the player can actually get to, and keep it clear.
     const candidates = [0, 1, 2].filter((l) =>
@@ -155,7 +176,7 @@ export function createTrackGenerator(scene, rng) {
     for (let lane = 0; lane < LANES.length; lane++) {
       if (lane === safeLane) continue;
       if (!rng.chance(density)) continue;
-      let type = rng.pick(types);
+      let type = pickType();
       if (type === 'low' && !allowJump) type = 'barrier';
       // Rails are long; only ever one per row and never next to the safe lane
       // at low tiers, where the player has less room to read them.
@@ -208,6 +229,13 @@ export function createTrackGenerator(scene, rng) {
     mesh.userData.worldZ = worldZ;
     mesh.userData.lane = lane;
     mesh.userData.dead = false;
+    // Cleared once the obstacle is behind the player, so a near miss can only
+    // ever be scored once per obstacle per pass.
+    mesh.userData.passed = false;
+    // Ramps latch `used` when they launch the player. Without clearing it on
+    // acquire, every ramp in the pool would fire exactly once per run and
+    // then be inert scenery for the rest of it.
+    mesh.userData.used = false;
     obstacles.push(mesh);
     return mesh;
   }
@@ -264,9 +292,11 @@ export function createTrackGenerator(scene, rng) {
 
   function spawnRow(worldZ, distance, speed) {
     const tier = tierFor(distance);
+    // Plan against the row's own position, not the player's, so the phase and
+    // intensity a row is built with match where it will actually be met.
     const plan = planRow(worldZ, tier, speed, {
       prevPassable, prevRequiredJump, prevRowZ,
-    });
+    }, intensity(worldZ), phaseFor(worldZ));
     repairs += plan.repaired;
 
     let usedRail = false;
@@ -324,13 +354,11 @@ export function createTrackGenerator(scene, rng) {
   /* ---------------- per-frame ---------------- */
 
   function update(dt, speed, distance) {
-    const tier = tierFor(distance);
-
     // Spawn ahead of the player.
     let guard = 0;
     while (nextRowZ < distance + CFG.SPAWN_AHEAD && guard++ < 40) {
       const extra = spawnRow(nextRowZ, distance, speed);
-      nextRowZ += Math.max(6, speed * rowGapTime(tier)) + extra;
+      nextRowZ += Math.max(6, speed * rowGapTime(intensity(nextRowZ))) + extra;
     }
     guard = 0;
     while (nextSceneryZ < distance + CFG.SPAWN_AHEAD && guard++ < 40) {
@@ -422,12 +450,20 @@ export function createTrackGenerator(scene, rng) {
 
     for (let i = 0; i < count; i++) {
       const tier = tierFor(distance);
-      const speed = Math.min(CFG.MAX_SPEED, CFG.BASE_SPEED + distance * 0.012);
+      const inten = intensity(distance);
+      // Sweep the real speed curve, including the endless creep past
+      // DIFFICULTY_DISTANCE — the tightest rows the game can produce are the
+      // ones this test most needs to reach.
+      const cap = Math.min(
+        CFG.ABSOLUTE_MAX_SPEED,
+        CFG.MAX_SPEED + Math.max(0, distance - CFG.DIFFICULTY_DISTANCE) / CFG.ENDLESS_SPEED_DIV
+      );
+      const speed = Math.min(cap, CFG.BASE_SPEED + distance * 0.012);
       const gapTime = (z - state.prevRowZ) / speed;
       const maxShift = Math.max(0, Math.min(2, Math.floor(gapTime / CFG.LANE_SETTLE)));
       const allowJump = !state.prevRequiredJump || gapTime >= CFG.JUMP_ROW_MIN_GAP;
 
-      const plan = planRow(z, tier, speed, state);
+      const plan = planRow(z, tier, speed, state, inten, phaseFor(distance));
       repaired += plan.repaired;
 
       // Re-validate the finished row independently of the planner.
@@ -436,12 +472,12 @@ export function createTrackGenerator(scene, rng) {
       state.prevPassable = plan.passable.length ? plan.passable : [0, 1, 2];
       state.prevRequiredJump = plan.requiredJump;
       state.prevRowZ = z;
-      const step = Math.max(6, speed * rowGapTime(tier));
+      const step = Math.max(6, speed * rowGapTime(inten));
       z += step;
       distance += step;
     }
 
-    return { rows: count, failures, repairs: repaired };
+    return { rows: count, failures, repairs: repaired, distance: Math.round(distance) };
   }
 
   function warm() {

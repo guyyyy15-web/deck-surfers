@@ -46,18 +46,67 @@ function overlaps(a, minX, maxX, minY, maxY, minZ, maxZ) {
 }
 
 /**
+ * Did the player get close enough to this obstacle to deserve credit?
+ * Returns 'dodge', 'clear', or null.
+ *
+ * Two distinct skill moments, both measured from the contact envelope so the
+ * reward tracks how close the player actually came:
+ *
+ *   dodge — passed in a neighbouring lane, within NEAR_MISS_X of contact.
+ *   clear — was laterally inside the obstacle and got over or under it,
+ *           within NEAR_MISS_Y. This is the jumped block and the ducked
+ *           gantry.
+ */
+function nearMissKind(a, px, ox, ud) {
+  const contactX = ud.hx + CFG.PLAYER_HALF_X;   // ~1.37 for most obstacles
+  const dx = Math.abs(px - ox);
+
+  if (dx > contactX) {
+    // Deliberately tighter than the 2.4 lane spacing: sitting safely in the
+    // next lane is not a near miss. This only fires when the player was
+    // still cutting across as they went past.
+    return dx <= CFG.NEAR_MISS_X ? 'dodge' : null;
+  }
+
+  // Laterally overlapping, so it was survived vertically — a tight ollie
+  // over a block, or a duck under a gantry.
+  const gapY = a.minY >= ud.yMax
+    ? a.minY - ud.yMax          // cleared it from above
+    : ud.yMin - a.maxY;         // ducked under it
+  return gapY >= 0 && gapY <= CFG.NEAR_MISS_Y ? 'clear' : null;
+}
+
+/**
  * Test the player against obstacles and pickups.
- * `ctx` supplies the callbacks: onCoin, onGem, onCrate, onRamp, onHit.
+ * `ctx` supplies the callbacks: onCoin, onGem, onCrate, onRamp, onHit and
+ * onNearMiss.
  */
 export function checkCollisions(player, track, distance, ctx) {
   player.getAABB(box);
+  const px = player.x;
 
   // --- obstacles ---
   for (let i = track.obstacles.length - 1; i >= 0; i--) {
     const m = track.obstacles[i];
     const z = m.position.z;
     const ud = m.userData;
-    if (z < -ud.hz - 2 || z > ud.hz + 2) continue;   // cheap z reject
+
+    // Once it is fully behind the player it can no longer be hit, but it may
+    // have been a near miss on the way past. Latched, so it scores at most
+    // once. The threshold has to clear the obstacle's own depth, not just the
+    // player's: a rail is 7 units long, so its *centre* passing the player
+    // still leaves the player inside it.
+    if (z > ud.hz + CFG.PLAYER_HALF_Z) {
+      if (!ud.passed) {
+        ud.passed = true;
+        if (!ud.harmless) {
+          const kind = nearMissKind(box, px, m.position.x, ud);
+          if (kind) ctx.onNearMiss(m, kind);
+        }
+      }
+      continue;
+    }
+    if (z < -ud.hz - 2) continue;   // cheap z reject: still too far ahead
 
     const hit = overlaps(
       box,
