@@ -279,10 +279,15 @@ export const TRICKS = Object.freeze([
   { name: 'KICKFLIP', x: 0, y: 0, z: TAU, dur: 0.42, weight: 5 },
   { name: 'HEELFLIP', x: 0, y: 0, z: -TAU, dur: 0.42, weight: 4 },
   { name: 'POP SHOVE-IT', x: 0, y: -Math.PI, z: 0, dur: 0.36, weight: 4 },
-  { name: '360 SHOVE-IT', x: 0, y: -TAU, z: 0, dur: 0.5, weight: 2 },
-  { name: 'TRE FLIP', x: 0, y: -TAU, z: TAU, dur: 0.55, weight: 1 },
-  { name: 'IMPOSSIBLE', x: TAU, y: 0, z: 0, dur: 0.5, weight: 1 },
+  // `grab` marks the slow ones — only these have the hang time for a hand to
+  // reach the deck and let go again before the wheels come down.
+  { name: '360 SHOVE-IT', x: 0, y: -TAU, z: 0, dur: 0.5, weight: 2, grab: true },
+  { name: 'TRE FLIP', x: 0, y: -TAU, z: TAU, dur: 0.55, weight: 1, grab: true },
+  { name: 'IMPOSSIBLE', x: TAU, y: 0, z: 0, dur: 0.5, weight: 1, grab: true },
 ]);
+
+/** When during a grabbing trick the hand is actually on the board. */
+export const GRAB_WINDOW = Object.freeze({ from: 0.2, to: 0.75 });
 
 /** Weighted pick from TRICKS. Uses Math.random — nothing here is replayed. */
 export function pickTrick() {

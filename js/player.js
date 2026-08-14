@@ -7,7 +7,7 @@
  * knowing which upgrades exist.
  */
 
-import { CFG, LANES, PAL, pickTrick } from './config.js';
+import { CFG, LANES, PAL, pickTrick, GRAB_WINDOW } from './config.js';
 import { buildPlayer } from './voxel.js';
 import { createPoseMachine } from './pose.js';
 
@@ -19,20 +19,51 @@ import { createPoseMachine } from './pose.js';
  * Angles are in radians and read as: hip/knee positive = folding forward,
  * shoulder z = arm swinging out from the body.
  */
+/*
+ * Arm sign convention, measured rather than guessed: for the right arm (its
+ * shoulder at x +0.35), shz +0.66 puts the hand out at x 0.62, and shz -0.66
+ * pulls it *in* to x 0.08 — across the chest. Every pose used to use the
+ * inward sign, which is why the arms vanished into the hoodie.
+ *
+ *   armR.shz  POSITIVE = out, away from the body
+ *   armL.shz  NEGATIVE = out, away from the body
+ */
 const REST = {
   'hips.y': 0, 'hips.rx': 0,
   // head.ry must track the waist twist the rig applies. REST is written over
-  // the rig's own value every frame, so a stale number here would leave him
-  // riding along looking off to one side.
-  'torso.rx': 0.1, 'torso.rz': 0, 'head.rx': 0,
+  // the rig's own value every frame, so a stale number here would leave the
+  // rider looking off to one side.
+  'torso.rx': 0.1, 'torso.rz': 0, 'torso.ry': 0, 'head.rx': 0,
   'head.ry': -CFG.RIG.TORSO_YAW * 0.78,
   'legF.hip': -0.12, 'legF.knee': 0.2, 'legF.foot': -0.08,
   'legB.hip': -0.06, 'legB.knee': 0.16, 'legB.foot': -0.06,
-  // Held well clear of the body: tucked in, the arms merged into the hoodie
-  // and he read as a single block with no limbs.
-  'armL.sh': 0, 'armL.shz': -0.66, 'armL.elb': -0.32,
-  'armR.sh': 0, 'armR.shz': 0.66, 'armR.elb': -0.32,
+  // Held out where a skater carries them: the arms are the counterweight, so
+  // they live away from the body where they can actually do something.
+  'armR.sh': 0, 'armR.shz': 0.62, 'armR.shy': 0, 'armR.elb': -0.45, 'armR.wrist': 0,
+  'armL.sh': 0, 'armL.shz': -0.62, 'armL.shy': 0, 'armL.elb': -0.45, 'armL.wrist': 0,
+  // The board sits at the feet. Airborne poses tuck the legs up, so the deck
+  // has to come up with them or it hangs below like a dropped tray - and a
+  // grab is impossible, because the arm simply cannot reach that far down.
+  'board.y': 0,
   'board.rx': 0, 'board.ry': 0, 'board.rz': 0,
+};
+
+/**
+ * Which channels overshoot instead of easing. Arms, shoulders and head are
+ * the parts that should whip and settle; the legs are absent on purpose,
+ * because they are IK-solved against the deck and overshoot there would lift
+ * the soles off the board.
+ */
+const SPRINGS = {
+  'armR.sh': { k: 150, d: 15 }, 'armR.shz': { k: 150, d: 15 },
+  'armR.shy': { k: 130, d: 14 }, 'armR.elb': { k: 170, d: 16 },
+  'armR.wrist': { k: 190, d: 17 },
+  'armL.sh': { k: 150, d: 15 }, 'armL.shz': { k: 150, d: 15 },
+  'armL.shy': { k: 130, d: 14 }, 'armL.elb': { k: 170, d: 16 },
+  'armL.wrist': { k: 190, d: 17 },
+  'torso.rz': { k: 120, d: 15 }, 'torso.ry': { k: 110, d: 14 },
+  'torso.rx': { k: 160, d: 18 },
+  'head.ry': { k: 140, d: 16 },
 };
 
 const POSES = {
@@ -61,8 +92,9 @@ const POSES = {
     // He still lifts his eyes to see the road, but only just — craning the
     // head back is what put the cap up above the gantry line.
     'torso.rx': 1.2, 'head.rx': -0.42,
-    'armL.shz': -1.0, 'armL.sh': -0.6, 'armL.elb': -1.0,
-    'armR.shz': 1.0, 'armR.sh': -0.6, 'armR.elb': -1.0,
+    // Tucked low over the board, hands gathered in front of the knees.
+    'armR.shz': 0.95, 'armR.sh': -0.75, 'armR.shy': 0.5, 'armR.elb': -1.35, 'armR.wrist': 0.3,
+    'armL.shz': -0.95, 'armL.sh': -0.75, 'armL.shy': -0.5, 'armL.elb': -1.35, 'armL.wrist': 0.3,
   },
   // The pop itself: legs snapping straight as the board leaves the ground.
   pop: {
@@ -70,9 +102,10 @@ const POSES = {
     'hips.y': 0.06,
     'legF.hip': 0.1, 'legF.knee': 0.06,
     'legB.hip': 0.14, 'legB.knee': 0.05,
-    'torso.rx': -0.1,
-    'armL.shz': -1.5, 'armL.sh': -0.6,
-    'armR.shz': 1.5, 'armR.sh': -0.6,
+    'torso.rx': -0.1, 'board.y': 0.06,
+    // Arms thrown up and forward — the pull that lifts you into an ollie.
+    'armR.shz': 1.65, 'armR.sh': -0.95, 'armR.shy': 0.3, 'armR.elb': -0.25, 'armR.wrist': -0.4,
+    'armL.shz': -1.65, 'armL.sh': -0.95, 'armL.shy': -0.3, 'armL.elb': -0.25, 'armL.wrist': -0.4,
   },
   // Airborne: knees pulled up under him, arms wide.
   float: {
@@ -80,9 +113,10 @@ const POSES = {
     'hips.y': -0.08,
     'legF.hip': -0.95, 'legF.knee': 1.15, 'legF.foot': 0.2,
     'legB.hip': -0.85, 'legB.knee': 1.05, 'legB.foot': 0.18,
-    'torso.rx': 0.28,
-    'armL.shz': -1.85, 'armL.sh': -0.35, 'armL.elb': -0.6,
-    'armR.shz': 1.85, 'armR.sh': -0.35, 'armR.elb': -0.6,
+    'torso.rx': 0.28, 'board.y': 0.3,
+    // Wide and high, hunting for balance.
+    'armR.shz': 1.9, 'armR.sh': -0.3, 'armR.shy': 0.15, 'armR.elb': -0.55, 'armR.wrist': -0.2,
+    'armL.shz': -1.9, 'armL.sh': -0.3, 'armL.shy': -0.15, 'armL.elb': -0.55, 'armL.wrist': -0.2,
   },
   // Grinding: low and locked, arms out wide on the balance point.
   grind: {
@@ -91,8 +125,25 @@ const POSES = {
     'legF.hip': -0.7, 'legF.knee': 0.95,
     'legB.hip': -0.6, 'legB.knee': 0.85,
     'torso.rx': 0.34,
-    'armL.shz': -2.05, 'armL.elb': -0.15,
-    'armR.shz': 2.05, 'armR.elb': -0.15,
+    // Straight out, like a tightrope walker's pole.
+    'armR.shz': 2.0, 'armR.sh': -0.1, 'armR.elb': -0.1, 'armR.wrist': -0.3,
+    'armL.shz': -2.0, 'armL.sh': -0.1, 'armL.elb': -0.1, 'armL.wrist': -0.3,
+  },
+  // Grab: the trailing hand reaches down and holds the deck while the board
+  // is still turning under them. Knees pull up tighter to bring the board
+  // within reach — you grab by tucking, not by stretching.
+  grab: {
+    ...REST,
+    'hips.y': -0.14,
+    'legF.hip': -1.25, 'legF.knee': 1.5, 'legF.foot': 0.3,
+    'legB.hip': -1.15, 'legB.knee': 1.4, 'legB.foot': 0.28,
+    'torso.rx': 0.55, 'torso.rz': 0.18, 'head.rx': -0.3, 'board.y': 0.56,
+    // Reaching hand: hanging almost straight down and across. A folded elbow
+    // would lift the hand back up, which is the opposite of reaching.
+    'armR.shz': 0.12, 'armR.sh': 0.1, 'armR.shy': 0.85,
+    'armR.elb': -0.12, 'armR.wrist': 0.5,
+    // The other arm counterweights, thrown up and back.
+    'armL.shz': -2.2, 'armL.sh': -0.5, 'armL.shy': -0.3, 'armL.elb': -0.3,
   },
   // Wiped out — limbs let go.
   bail: {
@@ -100,8 +151,8 @@ const POSES = {
     'legF.hip': -1.4, 'legF.knee': 0.9,
     'legB.hip': -0.6, 'legB.knee': 1.4,
     'torso.rx': -0.5,
-    'armL.shz': -2.4, 'armL.sh': -1.2,
-    'armR.shz': 2.4, 'armR.sh': -1.2,
+    'armR.shz': 2.5, 'armR.sh': -1.3, 'armR.shy': 0.8, 'armR.elb': -1.6,
+    'armL.shz': -2.2, 'armL.sh': 0.9, 'armL.shy': -0.4, 'armL.elb': -0.7,
   },
 };
 
@@ -126,17 +177,25 @@ export function createPlayer(scene) {
     'legB.knee': { obj: rig.legBack.lower.rotation, key: 'x' },
     'legB.foot': { obj: rig.legBack.end.rotation, key: 'x' },
 
-    'armL.sh': { obj: rig.armL.upper.rotation, key: 'x' },
-    'armL.shz': { obj: rig.armL.upper.rotation, key: 'z' },
-    'armL.elb': { obj: rig.armL.lower.rotation, key: 'x' },
-    'armR.sh': { obj: rig.armR.upper.rotation, key: 'x' },
-    'armR.shz': { obj: rig.armR.upper.rotation, key: 'z' },
-    'armR.elb': { obj: rig.armR.lower.rotation, key: 'x' },
+    // sh = swing fore/aft, shz = out from the body, shy = reach across it,
+    // elb = fold, wrist = the hand itself.
+    'armR.sh': { obj: rig.armRight.upper.rotation, key: 'x' },
+    'armR.shz': { obj: rig.armRight.upper.rotation, key: 'z' },
+    'armR.shy': { obj: rig.armRight.upper.rotation, key: 'y' },
+    'armR.elb': { obj: rig.armRight.lower.rotation, key: 'x' },
+    'armR.wrist': { obj: rig.armRight.end.rotation, key: 'x' },
+    'armL.sh': { obj: rig.armLeft.upper.rotation, key: 'x' },
+    'armL.shz': { obj: rig.armLeft.upper.rotation, key: 'z' },
+    'armL.shy': { obj: rig.armLeft.upper.rotation, key: 'y' },
+    'armL.elb': { obj: rig.armLeft.lower.rotation, key: 'x' },
+    'armL.wrist': { obj: rig.armLeft.end.rotation, key: 'x' },
 
+    'torso.ry': { obj: rig.torso.rotation, key: 'y' },
+    'board.y': { obj: rig.board.position, key: 'y' },
     'board.rx': { obj: rig.board.rotation, key: 'x' },
     'board.ry': { obj: rig.board.rotation, key: 'y' },
     'board.rz': { obj: rig.board.rotation, key: 'z' },
-  }, REST);
+  }, REST, SPRINGS);
 
 
   const s = {
@@ -280,6 +339,22 @@ export function createPlayer(scene) {
     // tricks needed the Double Jump upgrade to happen at all, so most runs
     // would never see one outside of a ramp.
     startTrick();
+
+    /*
+     * The pop is where the arms lead. The `pop` pose already targets them
+     * high, but a target alone only ever *eases* there. Kicking the spring
+     * velocity directly makes the arms whip up ahead of the body and overshoot
+     * before settling — that lead-and-follow-through is what reads as pulling
+     * yourself into the air rather than being lifted by one.
+     */
+    pose.impulse('armR.shz', 7.5);
+    pose.impulse('armL.shz', -7.5);
+    pose.impulse('armR.sh', -5.5);
+    pose.impulse('armL.sh', -5.5);
+    pose.impulse('armR.elb', 4.5);
+    pose.impulse('armL.elb', 4.5);
+    pose.impulse('torso.rx', -2.0);
+
     return air;
   }
 
@@ -441,6 +516,15 @@ export function createPlayer(scene) {
     if (s.grinding) return { pose: POSES.grind, rate: 14 };
     if (s.ducking && s.grounded) return { pose: POSES.tuck, rate: 14 };
     if (!s.grounded) {
+      // Mid-trick on one of the slow rotations: reach down and hold the deck,
+      // then let go in time to land. It is just another pose, so the blend
+      // handles both the reach and the release.
+      if (s.trick && s.trick.grab) {
+        const p = s.trickT / s.trick.dur;
+        if (p >= GRAB_WINDOW.from && p <= GRAB_WINDOW.to) {
+          return { pose: POSES.grab, rate: 16 };
+        }
+      }
       // Rising off the pop, then settling into the float once gravity wins.
       return s.vy > 2.5 ? { pose: POSES.pop, rate: 22 } : { pose: POSES.float, rate: 10 };
     }
@@ -507,36 +591,76 @@ export function createPlayer(scene) {
     if (rolling) {
       pose.add('hips.y', bob);
       pose.add('torso.rx', Math.sin(bobPhase + 0.7) * 0.05);
-      pose.add('armL.shz', Math.sin(bobPhase + 1.2) * 0.07);
-      pose.add('armR.shz', -Math.sin(bobPhase + 1.2) * 0.07);
+      // Two frequencies per arm, out of phase with each other, so the
+      // constant balance correction never lands on a metronome beat. One
+      // shared sine mirrored across both arms is exactly what reads as
+      // mechanical.
+      const a = s.animT;
+      pose.add('armR.shz', Math.sin(a * 2.3 + 1.2) * 0.1 + Math.sin(a * 3.7) * 0.05);
+      pose.add('armL.shz', -(Math.sin(a * 2.1 + 2.6) * 0.1 + Math.sin(a * 4.1) * 0.05));
+      pose.add('armR.sh', Math.sin(a * 1.7) * 0.09);
+      pose.add('armL.sh', Math.sin(a * 1.9 + 1.1) * 0.09);
+      pose.add('armR.elb', Math.sin(a * 2.9 + 0.4) * 0.07);
+      pose.add('armL.elb', Math.sin(a * 2.6 + 1.8) * 0.07);
     }
 
     // Grind wobble: slower and wider than the ride bob — he is balancing.
     if (s.grinding) {
       const w = Math.sin(s.animT * 7.5);
       pose.add('torso.rz', w * 0.1);
-      pose.add('armL.shz', w * 0.16);
       pose.add('armR.shz', w * 0.16);
+      pose.add('armL.shz', w * 0.16);
       pose.add('hips.y', Math.abs(w) * 0.015);
     }
 
-    // Carve: arms counter-swing, shoulders roll and the head turns into the
-    // turn. Driven by the same leanZ the lane damping already produces.
+    /*
+     * Carve. The arms are what actually turn a skateboard — you throw the
+     * upper body and the board follows.
+     *
+     * This used to add the *same* signed value to both arms, which just
+     * shrugs them in parallel. A real carve counter-rotates: the arm on the
+     * inside of the turn drops and reaches across the nose, the outside arm
+     * lifts and opens back behind, and the shoulders twist against the hips.
+     */
     const lean = s.leanZ;
-    pose.add('torso.rz', -lean * 0.24);
-    pose.add('armL.shz', -lean * 0.45);
-    pose.add('armR.shz', -lean * 0.45);
-    pose.add('head.ry', lean * 0.4);
-    pose.add('hips.rx', Math.abs(lean) * 0.12);
+    const absLean = Math.abs(lean);
 
-    // Landing squash: a decaying dip through the knees, so touching down has
-    // weight instead of snapping straight to the ride pose.
+    // Shoulders wind up against the hips, which stay square to the board.
+    pose.add('torso.rz', -lean * 0.3);
+    pose.add('torso.ry', -lean * 0.42);
+
+    // Inside arm reaches down and across; outside arm lifts and opens.
+    pose.add('armR.shz', -lean * 0.75);
+    pose.add('armL.shz', -lean * 0.75);
+    pose.add('armR.shy', -lean * 0.55);
+    pose.add('armL.shy', -lean * 0.55);
+    pose.add('armR.sh', -lean * 0.5);
+    pose.add('armL.sh', lean * 0.5);
+    // The leading hand cocks back as it reaches — the follow-through the
+    // spring then carries past and settles.
+    pose.add('armR.wrist', -lean * 0.4);
+    pose.add('armL.wrist', lean * 0.4);
+    // Elbows straighten on the reaching side, fold on the trailing one.
+    pose.add('armR.elb', -absLean * 0.3 + lean * 0.25);
+    pose.add('armL.elb', -absLean * 0.3 - lean * 0.25);
+
+    pose.add('head.ry', lean * 0.45);
+    pose.add('hips.rx', absLean * 0.12);
+
+    // Landing: the knees dip and the arms fly out and up to catch it, so
+    // touching down uses the whole body rather than just the legs.
     if (s.landT > 0) {
       const k = s.landT / CFG.LAND_SQUASH_TIME;
       pose.add('hips.y', -0.16 * k);
       pose.add('legF.knee', 0.5 * k);
       pose.add('legB.knee', 0.45 * k);
       pose.add('torso.rx', 0.2 * k);
+      pose.add('armR.shz', 0.7 * k);
+      pose.add('armL.shz', -0.7 * k);
+      pose.add('armR.sh', -0.35 * k);
+      pose.add('armL.sh', -0.35 * k);
+      pose.add('armR.elb', 0.4 * k);
+      pose.add('armL.elb', 0.4 * k);
     }
 
     /* ---- the board ---- */

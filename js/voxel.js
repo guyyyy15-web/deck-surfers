@@ -296,13 +296,17 @@ export function buildPlayer() {
   const legFront = limb(hips, { ...legCfg, x: 0.09, y: 0, z: -CFG.RIG.HIP_Z });
   const legBack = limb(hips, { ...legCfg, x: -0.09, y: 0, z: CFG.RIG.HIP_Z });
 
+  // Named for the side they are actually on: the rider faces -Z, so +X is
+  // their right. The same inversion in the legs is what put the feet on the
+  // wrong ends of the board, so it gets fixed here rather than left as a trap.
+  // Slightly bulkier than before so they read as limbs from behind at speed.
   const armCfg = {
-    upperSlot: 'shirt', upperW: 0.17, upperH: 0.24, upperD: 0.19, upperHex: PAL.shirt,
-    lowerSlot: 'shirtAlt', lowerW: 0.15, lowerH: 0.2, lowerD: 0.17, lowerHex: PAL.shirtAlt,
-    endSlot: 'skin', endW: 0.14, endH: 0.13, endD: 0.14, endHex: PAL.skin,
+    upperSlot: 'shirt', upperW: 0.18, upperH: 0.25, upperD: 0.2, upperHex: PAL.shirt,
+    lowerSlot: 'shirtAlt', lowerW: 0.16, lowerH: 0.22, lowerD: 0.18, lowerHex: PAL.shirtAlt,
+    endSlot: 'skin', endW: 0.15, endH: 0.15, endD: 0.15, endHex: PAL.skin,
   };
-  const armL = limb(torso, { ...armCfg, x: 0.35, y: 0.4, z: 0 });
-  const armR = limb(torso, { ...armCfg, x: -0.35, y: 0.4, z: 0 });
+  const armRight = limb(torso, { ...armCfg, x: 0.35, y: 0.4, z: 0 });
+  const armLeft = limb(torso, { ...armCfg, x: -0.35, y: 0.4, z: 0 });
 
   root.add(body);
 
@@ -370,7 +374,7 @@ export function buildPlayer() {
 
   return {
     root, board, deck, wheels, body, hipRoot, hips,
-    legFront, legBack, torso, armL, armR, head,
+    legFront, legBack, torso, armRight, armLeft, head,
     shield, hoverRing, magnetRing,
     slots, applySkin, setSlot,
   };
