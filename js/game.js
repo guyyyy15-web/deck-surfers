@@ -42,6 +42,7 @@ function createRunState() {
     // ---- combo ----
     combo: 0,
     comboTimer: 0,
+    comboWindowMax: CFG.COMBO_WINDOW,
     comboBest: 0,
     nextMilestone: CFG.COMBO_MILESTONE,
     phaseIndex: 0,
@@ -149,6 +150,21 @@ export function createGame({ canvas }) {
 
   function die() {
     if (state !== STATE.PLAYING) return;
+
+    // Second Wind catches the wipeout itself, after a shield would already
+    // have failed — so the two upgrades stack rather than overlapping.
+    if (upgrades.consumeRevive()) {
+      player.invuln = CFG.REVIVE_INVULN;
+      fx.burst(player.rig.root.position, PAL.hover, 30, { speed: 6, ttl: 0.9 });
+      fx.addShake(0.35);
+      audio.play('revive');
+      audio.stopGrind();
+      dropCombo(true);
+      ui.popup('SECOND WIND', player.rig.root.position, 'combo');
+      ui.setUpgradeIcons(upgrades.activeList());
+      return;
+    }
+
     state = STATE.DYING;
     dyingTimer = 0.9;
     audio.stopGrind();
@@ -240,7 +256,10 @@ export function createGame({ canvas }) {
   /** Feed the combo and refresh its window. */
   function bumpCombo(points) {
     run.combo += points;
-    run.comboTimer = CFG.COMBO_WINDOW;
+    // Long Fuse widens the window, so the meter has to remember what "full"
+    // means for this run rather than assuming the base value.
+    run.comboWindowMax = upgrades.stats.comboWindow;
+    run.comboTimer = run.comboWindowMax;
     if (run.combo > run.comboBest) run.comboBest = run.combo;
 
     while (run.combo >= run.nextMilestone) {
@@ -264,7 +283,7 @@ export function createGame({ canvas }) {
   function updateGrind(dt) {
     if (!player.isGrinding()) return;
 
-    const points = CFG.GRIND_SCORE_PER_SEC * dt;
+    const points = CFG.GRIND_SCORE_PER_SEC * dt * upgrades.stats.grindMult;
     award(points);
     grindScore += points;
 
@@ -347,8 +366,9 @@ export function createGame({ canvas }) {
     },
     /** A dodge or a clearance that came genuinely close. See collision.js. */
     onNearMiss(m, kind) {
-      award(CFG.NEAR_MISS_SCORE);
-      bumpCombo(CFG.COMBO_NEAR_MISS);
+      const mult = upgrades.stats.nearMissMult;
+      award(CFG.NEAR_MISS_SCORE * mult);
+      bumpCombo(CFG.COMBO_NEAR_MISS * mult);
       audio.play('nearMiss');
       ui.popup(kind === 'clear' ? 'CLEAR!' : 'CLOSE!', m.position, 'near');
     },

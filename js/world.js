@@ -10,13 +10,14 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { CFG, PAL } from './config.js';
 import { buildGroundSlab, makeMesh } from './voxel.js';
+import { cloudTexture } from './textures.js';
 
 /** Quality ladder, applied one way when the frame rate can't hold. */
 const QUALITY = [
-  { dpr: CFG.MAX_DPR, shadow: CFG.SHADOW_MAP, soft: true },
-  { dpr: 1.5, shadow: 1024, soft: true },
-  { dpr: 1, shadow: 512, soft: false },
-  { dpr: 0.75, shadow: 0, soft: false },
+  { dpr: CFG.MAX_DPR, shadow: CFG.SHADOW_MAP, soft: true, skyDetail: 1 },
+  { dpr: 1.5, shadow: 1024, soft: true, skyDetail: 1 },
+  { dpr: 1, shadow: 512, soft: false, skyDetail: 0 },
+  { dpr: 0.75, shadow: 0, soft: false, skyDetail: 0 },
 ];
 
 /** Vertical gradient sky, drawn on the inside of a big sphere. */
@@ -28,6 +29,14 @@ function makeSky() {
     uniforms: {
       topColor: { value: new THREE.Color(PAL.skyTop) },
       horizonColor: { value: new THREE.Color(PAL.skyHorizon) },
+      sunColor: { value: new THREE.Color(PAL.sun) },
+      // Everything below is per-phase, lerped alongside the two colours.
+      starAmount: { value: 0 },
+      cloudAmount: { value: 0.5 },
+      sunHeight: { value: 0.06 },
+      time: { value: 0 },
+      cloudMap: { value: cloudTexture() },
+      detail: { value: 1 },
     },
     vertexShader: `
       varying vec3 vWorld;
@@ -39,12 +48,61 @@ function makeSky() {
     fragmentShader: `
       uniform vec3 topColor;
       uniform vec3 horizonColor;
+      uniform vec3 sunColor;
+      uniform float starAmount;
+      uniform float cloudAmount;
+      uniform float sunHeight;
+      uniform float time;
+      uniform sampler2D cloudMap;
+      uniform float detail;      // 1 on the top quality steps, 0 lower down
       varying vec3 vWorld;
+
+      // Hash without a sin(). The sky covers the whole screen, so this runs
+      // millions of times a frame — the usual fract(sin(dot(...))) idiom cost
+      // about a third of the frame rate on a software rasteriser.
+      float hash(vec2 p) {
+        vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+        q += dot(q, q.yzx + 33.33);
+        return fract((q.x + q.y) * q.z);
+      }
+
       void main() {
+        vec3 dir = normalize(vWorld);
         // Biased so the hot band hugs the horizon instead of washing over
         // the whole upper sky.
-        float h = clamp(normalize(vWorld).y, 0.0, 1.0);
-        gl_FragColor = vec4(mix(horizonColor, topColor, pow(h, 0.3)), 1.0);
+        float h = clamp(dir.y, 0.0, 1.0);
+        vec3 col = mix(horizonColor, topColor, pow(h, 0.3));
+
+        // --- stars: only up high, and only when the phase asks for them ---
+        if (starAmount * detail > 0.001) {
+          vec2 cell = floor(dir.xz * 90.0 / max(dir.y + 0.35, 0.25));
+          float s = hash(cell);
+          float star = smoothstep(0.9955, 1.0, s);
+          // Twinkle, offset per star so they don't pulse in unison.
+          float tw = 0.65 + 0.35 * sin(time * 2.2 + s * 63.0);
+          col += vec3(star * tw * starAmount * smoothstep(0.02, 0.5, dir.y));
+        }
+
+        // --- a sun/moon sitting just above the horizon, behind the city ---
+        vec3 sunDir = normalize(vec3(0.36, sunHeight, -1.0));
+        float d = distance(dir, sunDir);
+        col += sunColor * smoothstep(0.16, 0.0, d) * 0.9;          // disc
+        col += sunColor * smoothstep(0.75, 0.0, d) * 0.16;         // bloom
+
+        // --- soft banded cloud, drifting ---
+        // A dome projection, one texture fetch and a mask. Baked rather than
+        // evaluated as noise here mostly for art control — it is easier to
+        // draw a good cloud in a canvas than to talk two octaves of value
+        // noise into looking like one. The divisor is clamped so the horizon
+        // cannot blow the UVs up into a shimmering mess.
+        float cloudMask = smoothstep(0.62, 0.10, dir.y)
+                        * smoothstep(0.0, 0.10, dir.y) * cloudAmount * detail;
+        vec2 cuv = dir.xz / max(dir.y, 0.09) * 0.055 + vec2(time * 0.004, 0.0);
+        float n = texture2D(cloudMap, cuv).r;
+        col = mix(col, mix(col, topColor * 0.6 + horizonColor * 0.75, 0.75),
+                  smoothstep(0.16, 0.60, n) * cloudMask);
+
+        gl_FragColor = vec4(col, 1.0);
         // A raw ShaderMaterial gets none of three's automatic output
         // conversion, so without this the colours land linear on an sRGB
         // framebuffer and read far darker and redder than the palette says.
@@ -56,7 +114,11 @@ function makeSky() {
   const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), material);
   sky.scale.setScalar(CFG.DRAW_DISTANCE * 0.85);
   sky.frustumCulled = false;
-  sky.renderOrder = -1;
+  // Drawn *after* the opaque scene, not before it. The sky shader is the most
+  // expensive one in the game and it covers the whole screen, so letting the
+  // depth buffer reject the pixels the city already fills is worth far more
+  // than the sorting it costs. depthWrite stays off so it never occludes.
+  sky.renderOrder = 1000;
   return sky;
 }
 
@@ -83,7 +145,10 @@ export function createWorld(canvas) {
   const sky = makeSky();
   scene.add(sky);
 
-  scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x5a4b93, 1.6));
+  // Held rather than discarded: phases dim it, so the night actually reads as
+  // night on the ground and not just in the sky.
+  const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x5a4b93, 1.6);
+  scene.add(hemi);
 
   const sun = new THREE.DirectionalLight(0xfff0cf, 2.0);
   sun.position.set(14, 24, 10);
@@ -143,29 +208,63 @@ export function createWorld(canvas) {
 
   // Sky and fog lerp from the colours they currently hold toward the new
   // phase's, so a transition never snaps.
-  const phaseFrom = { top: new THREE.Color(PAL.skyTop), horizon: new THREE.Color(PAL.skyHorizon) };
-  const phaseTo = { top: new THREE.Color(PAL.skyTop), horizon: new THREE.Color(PAL.skyHorizon) };
+  const U = sky.material.uniforms;
+  const mkSide = () => ({
+    top: new THREE.Color(PAL.skyTop),
+    horizon: new THREE.Color(PAL.skyHorizon),
+    sun: new THREE.Color(PAL.sun),
+    stars: 0, clouds: 0.5, sunHeight: 0.06, ambient: 1.6,
+  });
+  const phaseFrom = mkSide();
+  const phaseTo = mkSide();
   let phaseT = 1;
 
   /** `instant` snaps — used when a run starts, so it never opens mid-fade. */
   function setPhase(phase, instant) {
-    phaseFrom.top.copy(sky.material.uniforms.topColor.value);
-    phaseFrom.horizon.copy(sky.material.uniforms.horizonColor.value);
+    phaseFrom.top.copy(U.topColor.value);
+    phaseFrom.horizon.copy(U.horizonColor.value);
+    phaseFrom.sun.copy(U.sunColor.value);
+    phaseFrom.stars = U.starAmount.value;
+    phaseFrom.clouds = U.cloudAmount.value;
+    phaseFrom.sunHeight = U.sunHeight.value;
+    phaseFrom.ambient = hemi.intensity;
+
     phaseTo.top.set(phase.skyTop);
     phaseTo.horizon.set(phase.skyHorizon);
+    phaseTo.sun.set(phase.sun);
+    phaseTo.stars = phase.stars;
+    phaseTo.clouds = phase.clouds;
+    phaseTo.sunHeight = phase.sunHeight;
+    phaseTo.ambient = phase.ambient;
+
     phaseT = instant ? 1 : 0;
     if (instant) applyPhase(1);
   }
 
+  const lerp = (a, b, t) => a + (b - a) * t;
+
   function applyPhase(t) {
-    sky.material.uniforms.topColor.value.lerpColors(phaseFrom.top, phaseTo.top, t);
-    sky.material.uniforms.horizonColor.value.lerpColors(phaseFrom.horizon, phaseTo.horizon, t);
+    U.topColor.value.lerpColors(phaseFrom.top, phaseTo.top, t);
+    U.horizonColor.value.lerpColors(phaseFrom.horizon, phaseTo.horizon, t);
+    U.sunColor.value.lerpColors(phaseFrom.sun, phaseTo.sun, t);
+    U.starAmount.value = lerp(phaseFrom.stars, phaseTo.stars, t);
+    U.cloudAmount.value = lerp(phaseFrom.clouds, phaseTo.clouds, t);
+    U.sunHeight.value = lerp(phaseFrom.sunHeight, phaseTo.sunHeight, t);
+
+    // Ambient follows the sky, so NIGHT RUN is genuinely darker down on the
+    // street rather than only overhead — and the emissive coins and lit
+    // windows get something to stand out against.
+    hemi.intensity = lerp(phaseFrom.ambient, phaseTo.ambient, t);
+    sun.intensity = hemi.intensity * 1.25;
+
     // Fog tracks the horizon band, which is what keeps the street dissolving
     // into the sky instead of ending at a hard line.
-    scene.fog.color.copy(sky.material.uniforms.horizonColor.value);
+    scene.fog.color.copy(U.horizonColor.value);
   }
 
   function updatePhase(dt) {
+    // Stars twinkle and cloud drifts even when no transition is running.
+    U.time.value += dt;
     if (phaseT >= 1) return;
     phaseT = Math.min(1, phaseT + dt / CFG.PHASE_FADE);
     applyPhase(phaseT);
@@ -174,6 +273,10 @@ export function createWorld(canvas) {
   function applyQuality() {
     const q = QUALITY[qualityStep];
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.dpr));
+    // The sky is the one full-screen shader in the game, so it takes part in
+    // the same one-way degradation as resolution and shadows: on the lower
+    // steps it drops to the plain gradient and sun, losing stars and cloud.
+    sky.material.uniforms.detail.value = q.skyDetail;
     if (q.shadow === 0) {
       renderer.shadowMap.enabled = false;
     } else {

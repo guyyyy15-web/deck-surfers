@@ -6,8 +6,9 @@ upgrades that last exactly one run.
 **Play: https://guyyyy15-web.github.io/deck-surfers/**
 
 No build step, no package manager, no binary assets. Every model is
-procedural boxes, every sound — including the music — is synthesised at
-runtime, and the only dependency, three.js, is vendored into the repo.
+procedural boxes, every texture is painted into a canvas at boot, every sound
+— including the music — is synthesised at runtime, and the only dependency,
+three.js, is vendored into the repo.
 
 ## Running it locally
 
@@ -113,12 +114,25 @@ board. Only your best score and best distance are saved.
 | Magnet Deck | Pulls coins in from further away |
 | Double Jump | A second (then third) mid-air jump |
 | Hot Streak | Score multiplier, ×1.5 per stack |
-| Hover Deck | Float above the road and fall slowly — but duck lower |
+| Hover Deck | Float above the road and fall slowly — but ducking drops you |
 | Guard Rail | Survive a crash, once per stack |
 | Gold Grip | Coins are worth more |
 | Slow Burn | The street speeds up more gently |
 | Moon Boots | Much higher ollies |
 | Air Brake | Hold a duck-slide for longer |
+| Rail Rider | Grinds score double, and rails are easier to catch |
+| Long Fuse | The combo survives longer between hits |
+| Daredevil | Near misses are worth more and build combo faster |
+| Second Wind | Get back up once after a wipeout |
+| **Overdrive** | Big score multiplier — *but the street speeds up hard* |
+| **Glass Cannon** | Score ×2.5 — *but every shield and revive is stripped* |
+
+The last two are the interesting ones. Every other card is a straight gain, so
+picking is easy; a card that costs you something is a card you have to think
+about. Because effects are pure folds applied in a fixed order, Glass Cannon
+strips your shields whichever order you picked the two in — the stats are
+rebuilt from scratch every time, so there is no "which came first" to get
+wrong.
 
 ## Code layout
 
@@ -128,6 +142,7 @@ Each module owns one thing:
 | --- | --- |
 | `js/config.js` | Every tunable constant, the colour palette and the phases |
 | `js/rng.js` | Seeded PRNG (makes the track self-test reproducible) |
+| `js/textures.js` | Canvas-painted textures — asphalt, paving, towers, cloud |
 | `js/voxel.js` | All mesh construction, from one shared box geometry |
 | `js/world.js` | Renderer, scene, camera, lights, sky, scrolling road |
 | `js/input.js` | Keyboard + touch → semantic actions |
@@ -147,14 +162,32 @@ Each module owns one thing:
 and real `PCFSoftShadowMap` shadows. The sun's shadow frustum is deliberately
 tight and follows the player, because a wide one spends its resolution on
 empty asphalt. The chunky look comes from the geometry being boxes, not from
-throwing pixels away. If a device can't hold 45fps, resolution and shadow
-quality step down — one way only, so they can't oscillate.
+throwing pixels away. If a device can't hold 45fps, resolution, shadow quality
+and sky detail step down — one way only, so they can't oscillate.
 
-**The sky** is a vertical gradient on the inside of a sphere, with `scene.fog`
-matched to the horizon band so the street dissolves into it. Being a raw
-`ShaderMaterial` it needs `#include <colorspace_fragment>`; without that the
-colours land linear on an sRGB framebuffer and read far darker and redder
-than the palette says.
+**Textures are painted, not loaded.** `js/textures.js` draws asphalt, paving
+and tower faces into canvases at boot, so the repo still ships zero binary
+assets. Three rules keep them from fighting the voxel look: `NearestFilter`
+everywhere, because smooth filtering next to hard-edged geometry looks like a
+mistake; colour maps are greyscale *detail* multiplied by the palette, so
+`config.js` still decides every hue; and anything that must be brighter than
+its surface — lit windows — goes in an emissive map, since a colour map can
+only darken.
+
+This made the game *cheaper*, not dearer. A tower used to be a box plus up to
+sixteen window-band boxes; it is now one textured box plus a bit of roof
+furniture, which took a typical frame from ~470 draw calls to ~290.
+
+**The sky** is a gradient on the inside of a sphere, plus a sun disc with
+bloom, hash-based stars and a drifting cloud layer sampled from a baked
+texture — all per-phase, and all in one shader, so the whole sky costs a
+single draw call. Two things are easy to get wrong here. Being a raw
+`ShaderMaterial` it needs `#include <colorspace_fragment>`, or the colours
+land linear on an sRGB framebuffer and read far darker and redder than the
+palette says. And it is drawn with `renderOrder` *after* the opaque scene
+rather than before it, so the depth buffer can reject the pixels the city
+already covers — it is the only full-screen shader in the game and it is
+worth not paying for it twice.
 
 **Music** is a 90 BPM boom-bap loop built from oscillators and one noise
 buffer — kick, snare, hats, sub bass and a minor-key stab. Timing uses a

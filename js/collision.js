@@ -129,7 +129,7 @@ export function checkCollisions(player, track, distance, ctx) {
     // path below, which is what keeps grinding a risk rather than a tunnel.
     if (ud.grindable) {
       if (player.isGrinding(m)) continue;
-      if (player.canGrind() && player.vy <= 0 && box.minY >= ud.rideY - CFG.GRIND_SNAP) {
+      if (player.canGrind() && player.vy <= 0 && box.minY >= ud.rideY - player.grindSnap) {
         ctx.onGrind(m);
         continue;
       }

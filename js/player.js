@@ -314,26 +314,32 @@ export function createPlayer(scene) {
       rig.magnetRing.scale.setScalar(Math.max(1, next.magnetRadius / 4.5));
     }
 
-    // Deck colour by the most striking active upgrade.
-    let deckColour = PAL.deck;
-    if (stacks.moonBoots) deckColour = PAL.crate;
-    else if (stacks.scoreMult) deckColour = PAL.multi;
-    else if (stacks.magnet) deckColour = PAL.magnet;
-    else if (stacks.hoverDeck) deckColour = PAL.hover;
-    rig.deck.material = mat(deckColour);
+    rig.deck.material = mat(deckColour(stacks));
 
     // Wheels glow gold once coins are worth more.
     const wheelColour = stacks.coinValue ? PAL.coin : PAL.wheel;
     for (const w of rig.wheels) w.material = mat(wheelColour);
   }
 
-  /** Colour of the trail particles, so FX matches the board. */
-  function trailColour(stacks) {
+  /**
+   * The board is the readout for the build: whichever active upgrade is most
+   * striking claims the deck colour, and the trail follows it. One list, used
+   * by both, so they can never disagree.
+   */
+  function deckColour(stacks) {
+    if (stacks.glassCannon) return PAL.gem;
+    if (stacks.overdrive) return PAL.barrier;
+    if (stacks.railRider) return PAL.rail;
     if (stacks.moonBoots) return PAL.crate;
     if (stacks.scoreMult) return PAL.multi;
     if (stacks.magnet) return PAL.magnet;
     if (stacks.hoverDeck) return PAL.hover;
     return PAL.deck;
+  }
+
+  /** Colour of the trail particles, so FX matches the board. */
+  function trailColour(stacks) {
+    return deckColour(stacks);
   }
 
   function getAABB(out) {
@@ -406,6 +412,8 @@ export function createPlayer(scene) {
     get invuln() { return s.invuln; },
     set invuln(v) { s.invuln = v; },
     get grindTime() { return s.grindTime; },
+    /** How far above the bar a landing still counts — widened by Rail Rider. */
+    get grindSnap() { return stats ? stats.grindSnap : CFG.GRIND_SNAP; },
     moveLane, requestJump, launch, startDuck, endDuck,
     startGrind, endGrind, isGrinding, canGrind,
     update, applyStats, trailColour, getAABB, playDeath, reset,

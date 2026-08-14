@@ -118,6 +118,11 @@ export function createAudio() {
       tone({ type: 'sine', from: 330, to: 660, dur: 0.35, gain: 0.2 });
       tone({ type: 'sine', from: 495, to: 990, dur: 0.35, gain: 0.14, delay: 0.05 });
     },
+    revive: () => {
+      tone({ type: 'sine', from: 220, to: 880, dur: 0.5, gain: 0.3 });
+      tone({ type: 'square', from: 440, to: 1320, dur: 0.4, gain: 0.16, delay: 0.08 });
+      noise({ dur: 0.4, gain: 0.22, freq: 3000, q: 2 });
+    },
     choice: () => tone({ type: 'square', from: 660, to: 990, dur: 0.1, gain: 0.24 }),
     upgrade: () => {
       tone({ type: 'square', from: 523, to: 523, dur: 0.09, gain: 0.26 });

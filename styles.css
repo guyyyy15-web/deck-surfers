@@ -42,9 +42,12 @@ html, body {
   height: 100%;
   display: block;
   touch-action: none;
+  z-index: 0;
 }
 
-#ui { position: fixed; inset: 0; pointer-events: none; }
+/* Explicit stack: canvas 0, #grade 1, UI 2. Without a z-index here the
+   grade would paint over the HUD, since both are positioned. */
+#ui { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
 
 .screen { position: absolute; inset: 0; }
 .screen.hidden { display: none; }
@@ -292,6 +295,42 @@ kbd {
   background: linear-gradient(180deg, #fff3b0, var(--gold));
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
   display: inline-block;
+}
+
+/* ---------------- screen grade ----------------
+   A vignette and a fine scanline over the canvas. Costs one composited
+   layer and no draw calls, and does more for how finished the frame looks
+   than any amount of extra geometry would. Sits under the UI, over the 3D. */
+
+#grade {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.055) 0px,
+      rgba(0, 0, 0, 0.055) 1px,
+      rgba(255, 255, 255, 0.014) 1px,
+      rgba(255, 255, 255, 0.014) 3px
+    ),
+    radial-gradient(
+      ellipse 78% 68% at 50% 46%,
+      rgba(0, 0, 0, 0) 42%,
+      rgba(10, 4, 30, 0.30) 78%,
+      rgba(8, 3, 24, 0.62) 100%
+    );
+}
+
+/* The scanline is the part that hurts on a small panel, so drop it there
+   and keep only the vignette. */
+@media (max-width: 620px) {
+  #grade { background-image: radial-gradient(
+      ellipse 84% 74% at 50% 46%,
+      rgba(0, 0, 0, 0) 45%,
+      rgba(10, 4, 30, 0.26) 80%,
+      rgba(8, 3, 24, 0.55) 100%); }
 }
 
 /* ---------------- combo meter ---------------- */
