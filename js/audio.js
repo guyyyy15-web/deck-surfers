@@ -39,14 +39,21 @@ export function createAudio() {
     for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
   }
 
+  // Transposition applied to `tone` for the duration of one play() call.
+  // Music schedules its own notes and never goes through play(), so it is
+  // unaffected.
+  let pitch = 1;
+
   function tone({ type = 'square', from, to, dur, gain = 0.5, delay = 0 }) {
     if (!ctx || muted) return;
     const t0 = ctx.currentTime + delay;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
     osc.type = type;
-    osc.frequency.setValueAtTime(from, t0);
-    if (to && to !== from) osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), t0 + dur);
+    osc.frequency.setValueAtTime(from * pitch, t0);
+    if (to && to !== from) {
+      osc.frequency.exponentialRampToValueAtTime(Math.max(1, to * pitch), t0 + dur);
+    }
     g.gain.setValueAtTime(0.0001, t0);
     g.gain.exponentialRampToValueAtTime(gain, t0 + 0.008);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
@@ -91,6 +98,21 @@ export function createAudio() {
       noise({ dur: 0.25, gain: 0.4, freq: 2400, q: 4 });
       tone({ type: 'sine', from: 1200, to: 400, dur: 0.28, gain: 0.25 });
     },
+    // Short and dry: a near miss fires often, so it has to sit under the
+    // music rather than punch through it.
+    nearMiss: () => {
+      noise({ dur: 0.09, gain: 0.16, freq: 3200, q: 6 });
+      tone({ type: 'triangle', from: 1200, to: 1800, dur: 0.07, gain: 0.14 });
+    },
+    comboUp: () => {
+      tone({ type: 'square', from: 784, to: 784, dur: 0.06, gain: 0.2 });
+      tone({ type: 'square', from: 1175, to: 1175, dur: 0.1, gain: 0.2, delay: 0.06 });
+    },
+    comboDrop: () => tone({ type: 'triangle', from: 520, to: 240, dur: 0.16, gain: 0.14 }),
+    phase: () => {
+      tone({ type: 'sine', from: 330, to: 660, dur: 0.35, gain: 0.2 });
+      tone({ type: 'sine', from: 495, to: 990, dur: 0.35, gain: 0.14, delay: 0.05 });
+    },
     choice: () => tone({ type: 'square', from: 660, to: 990, dur: 0.1, gain: 0.24 }),
     upgrade: () => {
       tone({ type: 'square', from: 523, to: 523, dur: 0.09, gain: 0.26 });
@@ -100,10 +122,19 @@ export function createAudio() {
     },
   };
 
-  function play(name) {
+  /**
+   * `opts.semitones` transposes the whole sound. Used to walk the coin blip
+   * up as a combo builds, which makes a long chain audible without the
+   * player having to watch the HUD. Existing callers pass nothing.
+   */
+  function play(name, opts) {
     if (!ctx || muted) return;
     const fn = SOUNDS[name];
-    if (fn) fn();
+    if (!fn) return;
+    const semis = opts && opts.semitones ? opts.semitones : 0;
+    pitch = Math.pow(2, semis / 12);
+    fn();
+    pitch = 1;
   }
 
   function setMuted(next) {

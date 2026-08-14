@@ -22,8 +22,13 @@ export const CFG = Object.freeze({
 
   // ---- speed ----
   BASE_SPEED: 14,           // world units / second at the start of a run
-  MAX_SPEED: 38,
+  MAX_SPEED: 38,            // cap reached by the time-based ramp alone
   SPEED_RAMP: 0.32,         // units/sec added per second of running
+  // Past DIFFICULTY_DISTANCE the cap itself keeps creeping, so a run never
+  // reaches a state where nothing can get harder. Slow enough (+1 u/s per
+  // ENDLESS_SPEED_DIV metres) that it never reads as a wall.
+  ENDLESS_SPEED_DIV: 900,
+  ABSOLUTE_MAX_SPEED: 50,   // hard stop; see SUBSTEP_DT for why it matters
 
   // ---- jumping ----
   GRAVITY: 25,
@@ -58,14 +63,47 @@ export const CFG = Object.freeze({
   SLAB_LEN: 30,
 
   // ---- difficulty ----
-  DIFFICULTY_DISTANCE: 1800, // metres to reach maximum difficulty
-  TIER_SIZE: 300,
+  // `intensity()` in track.js ramps 0→1 over DIFFICULTY_DISTANCE and then
+  // keeps creeping, unbounded, one extra "step" per ENDLESS_PERIOD. Density
+  // and row pacing are driven by it, so the run never stops escalating.
+  DIFFICULTY_DISTANCE: 1800,
+  ENDLESS_PERIOD: 2600,
+  TIER_SIZE: 300,           // unlocks obstacle *types* only
+  DENSITY_MAX: 0.92,        // leaving 3 lanes fully blocked is the repair
+                            // loop's job, not something to aim for
+  ROW_GAP_TIME_FLOOR: 0.48, // below this a lane change (LANE_SETTLE) plus
+                            // human reaction time stops being survivable
+
+  // ---- phases ----
+  PHASE_LENGTH: 750,        // metres per phase; PHASES cycles
+  PHASE_FADE: 1.5,          // seconds to lerp sky + fog to the new palette
 
   // ---- scoring ----
   SCORE_PER_METRE: 1,
   COIN_SCORE: 10,
   GEM_SCORE: 50,
   RAMP_BONUS: 50,
+  NEAR_MISS_SCORE: 25,
+
+  // ---- combo ----
+  // The combo multiplies *everything*, distance score included. That is the
+  // point: sitting in a clear lane scores ×1, while a player who keeps
+  // touching the track can reach ×4. Risk finally pays.
+  COMBO_WINDOW: 2.5,        // seconds before the combo lapses
+  COMBO_MULT_PER: 0.02,     // multiplier gained per combo point
+  COMBO_MULT_MAX: 4,        // ...capped here (150 points to reach it)
+  COMBO_COIN: 1,
+  COMBO_GEM: 5,
+  COMBO_RAMP: 3,
+  COMBO_NEAR_MISS: 2,
+  COMBO_MILESTONE: 25,      // burst + popup every N points
+
+  // ---- near miss ----
+  // Measured outward from the contact width, so a "dodge" is a lane squeeze
+  // that genuinely nearly hit, and a "clear" is a jump or duck that passed
+  // within NEAR_MISS_Y of the obstacle.
+  NEAR_MISS_X: 1.9,
+  NEAR_MISS_Y: 0.45,
 
   // ---- coins ----
   COIN_Y: 1.1,
@@ -97,13 +135,63 @@ export const CFG = Object.freeze({
 
   // ---- simulation ----
   MAX_FRAME_DT: 0.05,        // clamp so a backgrounded tab can't tunnel
+  // MAX_FRAME_DT alone is not enough. The window in which an obstacle and the
+  // player overlap in z is 2 × (hz + PLAYER_HALF_Z) — only 1.28 units for the
+  // thinnest obstacle, the gantry. At 50 u/s a single 0.05s frame advances
+  // 2.5 units, so an obstacle could step clean over the player between two
+  // collision tests. game.js therefore splits every frame into substeps of at
+  // most this length, bounding travel per test to 1.0 units at the absolute
+  // speed cap — inside the 1.28 window, so an overlap can never be skipped.
+  // Chosen so a healthy 60fps frame (0.0167s) still takes exactly one step
+  // and pays nothing: substepping only kicks in once frames get long, which
+  // is precisely when it is needed.
+  SUBSTEP_DT: 0.02,
 
   // ---- storage (score/mute only — never upgrades) ----
   // Deliberately still 'deckrunner:' after the rename to Deck Surfers —
   // changing the key would silently wipe every existing high score.
   KEY_BEST: 'deckrunner:best',
   KEY_MUTED: 'deckrunner:muted',
+  KEY_BEST_DIST: 'deckrunner:bestdist',
 });
+
+/**
+ * Run phases. Every CFG.PHASE_LENGTH metres the run moves to the next one and
+ * cycles, changing both the palette and the mix of obstacles — so a long run
+ * keeps changing texture instead of only changing numbers. No new meshes are
+ * involved: the sky is already a gradient shader with two uniforms, and the
+ * weights simply re-bias a pick the planner was already making.
+ *
+ * `weights` are relative, and are only consulted for types the current tier
+ * has actually unlocked, so phases can never smuggle in an obstacle early.
+ */
+export const PHASES = Object.freeze([
+  {
+    name: 'DOWNTOWN',
+    skyTop: 0x150b32, skyHorizon: 0xa84776,
+    weights: { barrier: 3, low: 3, high: 2, ramp: 2, rail: 1 },
+  },
+  {
+    name: 'NIGHT RUN',
+    skyTop: 0x060418, skyHorizon: 0x3b2a7a,
+    weights: { barrier: 2, low: 2, high: 4, ramp: 1, rail: 2 },
+  },
+  {
+    name: 'SUNRISE',
+    skyTop: 0x2b1b4d, skyHorizon: 0xffa45c,
+    weights: { barrier: 4, low: 2, high: 1, ramp: 3, rail: 2 },
+  },
+  {
+    name: 'OVERPASS',
+    skyTop: 0x0d2137, skyHorizon: 0x2fa8a0,
+    weights: { barrier: 2, low: 4, high: 3, ramp: 2, rail: 3 },
+  },
+]);
+
+/** The phase a given distance falls in. Cycles forever. */
+export function phaseFor(distance) {
+  return PHASES[Math.floor(distance / CFG.PHASE_LENGTH) % PHASES.length];
+}
 
 /** Fixed retro palette — every mesh in the game draws from this list. */
 export const PAL = Object.freeze({

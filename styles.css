@@ -294,6 +294,121 @@ kbd {
   display: inline-block;
 }
 
+/* ---------------- combo meter ---------------- */
+
+/* Tier colour is driven by data-tier so JS writes one attribute rather than
+   a pile of inline styles. */
+.combo {
+  --combo-tint: var(--cyan);
+  margin-top: 0.35rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+/* An author-level `display: flex` outranks the UA rule for [hidden], so the
+   attribute needs saying explicitly — same as .howto above. */
+.combo[hidden] { display: none; }
+.combo[data-tier="1"] { --combo-tint: #7bff5d; }
+.combo[data-tier="2"] { --combo-tint: var(--gold); }
+.combo[data-tier="3"] { --combo-tint: var(--pink); }
+
+.combo-mult {
+  font-family: var(--display);
+  font-size: 1.15rem;
+  line-height: 1;
+  color: var(--combo-tint);
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.7);
+  min-width: 3.1ch;
+}
+.combo-bar {
+  position: relative;
+  width: clamp(56px, 18vw, 96px);
+  height: 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(10, 4, 28, 0.7);
+  overflow: hidden;
+}
+/* The drain is a transform on a full-width child, so it never lays out. */
+.combo-bar i {
+  --combo-fill: 1;
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  transform: scaleX(var(--combo-fill));
+  background: var(--combo-tint);
+  transition: transform 0.08s linear;
+}
+
+/* ---------------- phase banner ---------------- */
+
+.phase-banner {
+  position: absolute;
+  top: 26%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--display);
+  font-size: clamp(1.5rem, 6vw, 2.4rem);
+  letter-spacing: 0.16em;
+  color: #fff;
+  text-shadow: 3px 3px 0 var(--pink), 0 4px 18px rgba(0, 0, 0, 0.7);
+  opacity: 0;
+  pointer-events: none;
+}
+.phase-banner.show { animation: phase-in 1.8s ease-out; }
+@keyframes phase-in {
+  0%   { opacity: 0; letter-spacing: 0.5em; }
+  18%  { opacity: 1; letter-spacing: 0.16em; }
+  72%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ---------------- floating score popups ---------------- */
+
+.popups {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.popup {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-family: var(--display);
+  font-size: clamp(0.9rem, 3.4vw, 1.25rem);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  color: #fff;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.75);
+  will-change: transform, opacity;
+}
+.popup[data-tone="gem"]   { color: var(--cyan); }
+.popup[data-tone="ramp"]  { color: #7bff5d; }
+.popup[data-tone="near"]  { color: var(--gold); }
+.popup[data-tone="combo"] { color: var(--pink-hi); }
+
+/* ---------------- new best ---------------- */
+
+.new-best[hidden] { display: none; }
+.new-best {
+  font-family: var(--display);
+  font-size: 0.95rem;
+  letter-spacing: 0.22em;
+  color: var(--gold);
+  text-shadow: 2px 2px 0 var(--pink-lo);
+  animation: best-pulse 1.1s ease-in-out infinite;
+}
+@keyframes best-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phase-banner.show { animation-duration: 0.01ms; opacity: 1; }
+  .new-best { animation: none; }
+}
+
 .hud-upgrades {
   position: absolute;
   left: calc(0.9rem + env(safe-area-inset-left));

@@ -9,7 +9,7 @@
 
 import * as THREE from '../vendor/three.module.min.js';
 import { CFG, PAL } from './config.js';
-import { buildGroundSlab } from './voxel.js';
+import { buildGroundSlab, makeMesh } from './voxel.js';
 
 /** Quality ladder, applied one way when the frame rate can't hold. */
 const QUALITY = [
@@ -112,9 +112,64 @@ export function createWorld(canvas) {
     slabs.push(slab);
   }
 
+  // --- personal-best ghost marker ---
+  // A gate across the street at the furthest the player has ever reached.
+  // It scrolls in with everything else, so the target is a place you can see
+  // coming rather than a number in the corner.
+  const bestMarker = new THREE.Group();
+  const bestBar = makeMesh(9.6, 0.28, 0.28, PAL.multi);
+  bestBar.position.y = 3.2;
+  bestMarker.add(bestBar);
+  for (const side of [-1, 1]) {
+    const post = makeMesh(0.22, 3.2, 0.22, PAL.multi);
+    post.position.set(side * 4.7, 1.6, 0);
+    bestMarker.add(post);
+  }
+  for (const child of bestMarker.children) {
+    child.material = child.material.clone();
+    child.material.transparent = true;
+    child.material.opacity = 0.55;
+    child.material.depthWrite = false;
+  }
+  bestMarker.visible = false;
+  scene.add(bestMarker);
+  let bestMarkerZ = 0;
+
   let qualityStep = 0;
   let cssW = 1;
   let cssH = 1;
+
+  /* ---------------- phases ---------------- */
+
+  // Sky and fog lerp from the colours they currently hold toward the new
+  // phase's, so a transition never snaps.
+  const phaseFrom = { top: new THREE.Color(PAL.skyTop), horizon: new THREE.Color(PAL.skyHorizon) };
+  const phaseTo = { top: new THREE.Color(PAL.skyTop), horizon: new THREE.Color(PAL.skyHorizon) };
+  let phaseT = 1;
+
+  /** `instant` snaps — used when a run starts, so it never opens mid-fade. */
+  function setPhase(phase, instant) {
+    phaseFrom.top.copy(sky.material.uniforms.topColor.value);
+    phaseFrom.horizon.copy(sky.material.uniforms.horizonColor.value);
+    phaseTo.top.set(phase.skyTop);
+    phaseTo.horizon.set(phase.skyHorizon);
+    phaseT = instant ? 1 : 0;
+    if (instant) applyPhase(1);
+  }
+
+  function applyPhase(t) {
+    sky.material.uniforms.topColor.value.lerpColors(phaseFrom.top, phaseTo.top, t);
+    sky.material.uniforms.horizonColor.value.lerpColors(phaseFrom.horizon, phaseTo.horizon, t);
+    // Fog tracks the horizon band, which is what keeps the street dissolving
+    // into the sky instead of ending at a hard line.
+    scene.fog.color.copy(sky.material.uniforms.horizonColor.value);
+  }
+
+  function updatePhase(dt) {
+    if (phaseT >= 1) return;
+    phaseT = Math.min(1, phaseT + dt / CFG.PHASE_FADE);
+    applyPhase(phaseT);
+  }
 
   function applyQuality() {
     const q = QUALITY[qualityStep];
@@ -202,6 +257,21 @@ export function createWorld(canvas) {
       }
       slab.position.z = z;
     }
+
+    if (bestMarker.visible) {
+      const z = -(bestMarkerZ - travelled);
+      bestMarker.position.z = z;
+      // Hide it once it is behind the player — passing your best should feel
+      // like a threshold crossed, not a thing trailing you.
+      if (z > CFG.DESPAWN_Z) bestMarker.visible = false;
+    }
+  }
+
+  /** Place the ghost gate. A distance of 0 (no record yet) hides it. */
+  function setBestMarker(distance) {
+    bestMarkerZ = distance;
+    bestMarker.visible = distance > 0;
+    bestMarker.position.z = -distance;
   }
 
   function resetGround() {
@@ -220,6 +290,7 @@ export function createWorld(canvas) {
   return {
     renderer, scene, camera, sun,
     resize, render, updateCamera, orbitCamera, updateGround, resetGround, setQualityStep,
+    setPhase, updatePhase, setBestMarker,
     get qualityStep() { return qualityStep; },
     stats: () => ({
       calls: renderer.info.render.calls,

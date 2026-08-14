@@ -9,7 +9,7 @@
  */
 
 import * as THREE from '../vendor/three.module.min.js';
-import { CFG, PAL } from './config.js';
+import { CFG, PAL, phaseFor } from './config.js';
 import { makeRng } from './rng.js';
 import { createWorld } from './world.js';
 import { createInput } from './input.js';
@@ -39,7 +39,22 @@ function createRunState() {
     time: 0,
     nextChoiceAt: CFG.CHOICE_EVERY_M,
     choicesTaken: 0,
+    // ---- combo ----
+    combo: 0,
+    comboTimer: 0,
+    comboBest: 0,
+    nextMilestone: CFG.COMBO_MILESTONE,
+    phaseIndex: 0,
   };
+}
+
+/**
+ * The combo multiplier. This scales *every* score award, distance included,
+ * which is the whole point: holding a clear lane scores ×1, while a player
+ * who keeps touching the track earns up to COMBO_MULT_MAX.
+ */
+function comboMult(combo) {
+  return 1 + Math.min(CFG.COMBO_MULT_MAX - 1, combo * CFG.COMBO_MULT_PER);
 }
 
 export function createGame({ canvas }) {
@@ -58,8 +73,10 @@ export function createGame({ canvas }) {
   let dyingTimer = 0;
   let orbitT = 0;
   let best = 0;
+  let bestDist = 0;
   try {
     best = Number(localStorage.getItem(CFG.KEY_BEST)) || 0;
+    bestDist = Number(localStorage.getItem(CFG.KEY_BEST_DIST)) || 0;
   } catch (e) { /* private mode */ }
 
   // Allow the verification harness (and curious players) to shorten the
@@ -115,6 +132,12 @@ export function createGame({ canvas }) {
     ui.updateHUD(run);
     ui.showHUD();
     audio.setMusicLevel(MUSIC_RUN);
+
+    // Back to phase 0's palette instantly — a run should never open mid-fade
+    // in the colours of wherever the last one ended.
+    world.setPhase(phaseFor(0), true);
+    world.setBestMarker(bestDist);
+
     state = STATE.PLAYING;
   }
 
@@ -122,6 +145,7 @@ export function createGame({ canvas }) {
     if (state !== STATE.PLAYING) return;
     state = STATE.DYING;
     dyingTimer = 0.9;
+    dropCombo(true);
     player.playDeath();
     fx.burst(player.rig.root.position, PAL.barrier, 26, { speed: 6, ttl: 0.8 });
     fx.addShake(0.5);
@@ -131,18 +155,31 @@ export function createGame({ canvas }) {
   function finishRun() {
     state = STATE.GAME_OVER;
     audio.setMusicLevel(MUSIC_MENU);
-    if (run.score > best) {
+
+    const beatScore = run.score > best;
+    if (beatScore) {
       best = run.score;
       try {
         localStorage.setItem(CFG.KEY_BEST, String(Math.floor(best)));
       } catch (e) { /* ignore */ }
       ui.setBest(best);
     }
+    // Tracked separately from the score: the ghost marker needs a distance,
+    // and the best score isn't always set on the longest run.
+    if (run.distance > bestDist) {
+      bestDist = run.distance;
+      try {
+        localStorage.setItem(CFG.KEY_BEST_DIST, String(Math.floor(bestDist)));
+      } catch (e) { /* ignore */ }
+    }
+
     ui.showGameOver({
       score: run.score,
       distance: run.distance,
       coins: run.coins,
       best,
+      newBest: beatScore,
+      comboBest: run.comboBest,
       upgrades: upgrades.activeList(),
     });
   }
@@ -182,21 +219,57 @@ export function createGame({ canvas }) {
     ui.showHUD();
   }
 
+  /* ---------------- combo ---------------- */
+
+  /** Award score through both multipliers. The single place score is added. */
+  function award(points) {
+    run.score += points * comboMult(run.combo) * upgrades.stats.scoreMult;
+  }
+
+  /** Feed the combo and refresh its window. */
+  function bumpCombo(points) {
+    run.combo += points;
+    run.comboTimer = CFG.COMBO_WINDOW;
+    if (run.combo > run.comboBest) run.comboBest = run.combo;
+
+    while (run.combo >= run.nextMilestone) {
+      run.nextMilestone += CFG.COMBO_MILESTONE;
+      fx.burst(player.rig.root.position, PAL.multi, 16, { speed: 4.2, ttl: 0.6 });
+      fx.addShake(0.12);
+      audio.play('comboUp', { semitones: Math.min(12, run.combo / CFG.COMBO_MILESTONE * 2) });
+      ui.popup(`×${comboMult(run.combo).toFixed(1)}`, player.rig.root.position, 'combo');
+    }
+  }
+
+  /** The combo lapsed. Nothing is taken away — it was banked as it was earnt. */
+  function dropCombo(silent) {
+    if (run.combo <= 0) return;
+    run.combo = 0;
+    run.comboTimer = 0;
+    run.nextMilestone = CFG.COMBO_MILESTONE;
+    if (!silent) audio.play('comboDrop');
+  }
+
   /* ---------------- collision handlers ---------------- */
 
   const collisionCtx = {
     onCoin(m) {
       run.coins++;
-      run.score += upgrades.stats.coinValue * upgrades.stats.scoreMult;
+      award(upgrades.stats.coinValue);
+      bumpCombo(CFG.COMBO_COIN);
       fx.burst(m.position, PAL.coin, 6, { speed: 2.6, ttl: 0.35 });
-      audio.play('coin');
+      // Pitch climbs with the combo tier — the cheapest satisfaction in the
+      // game, and it makes a long chain audible without looking at the HUD.
+      audio.play('coin', { semitones: Math.min(14, Math.floor(run.combo / 5)) });
       track.removeCollectible(m);
     },
     onGem(m) {
       run.coins += 5;
-      run.score += CFG.GEM_SCORE * upgrades.stats.scoreMult;
+      award(CFG.GEM_SCORE);
+      bumpCombo(CFG.COMBO_GEM);
       fx.burst(m.position, PAL.gem, 14, { speed: 4, ttl: 0.6 });
       audio.play('gem');
+      ui.popup(`+${CFG.GEM_SCORE}`, m.position, 'gem');
       track.removeCollectible(m);
     },
     onCrate(m) {
@@ -206,9 +279,18 @@ export function createGame({ canvas }) {
     },
     onRamp(m) {
       player.launch(CFG.RAMP_LAUNCH_V);
-      run.score += CFG.RAMP_BONUS * upgrades.stats.scoreMult;
+      award(CFG.RAMP_BONUS);
+      bumpCombo(CFG.COMBO_RAMP);
       fx.burst(m.position, PAL.ramp, 14, { speed: 4, ttl: 0.5 });
       audio.play('ramp');
+      ui.popup(`AIR +${CFG.RAMP_BONUS}`, m.position, 'ramp');
+    },
+    /** A dodge or a clearance that came genuinely close. See collision.js. */
+    onNearMiss(m, kind) {
+      award(CFG.NEAR_MISS_SCORE);
+      bumpCombo(CFG.COMBO_NEAR_MISS);
+      audio.play('nearMiss');
+      ui.popup(kind === 'clear' ? 'CLEAR!' : 'CLOSE!', m.position, 'near');
     },
     onHit(m) {
       if (player.invuln > 0) return;
@@ -219,6 +301,9 @@ export function createGame({ canvas }) {
         audio.play('shield');
         track.removeObstacle(m);
         ui.setUpgradeIcons(upgrades.activeList());
+        // Surviving isn't a combo event, so the chain lapses unless the
+        // player re-engages: a real cost, without being punitive.
+        dropCombo(true);
         return;
       }
       die();
@@ -261,18 +346,37 @@ export function createGame({ canvas }) {
 
   const trailPos = new THREE.Vector3();
 
-  function step(dt) {
+  /**
+   * One fixed-length slice of simulation. Everything that moves the world or
+   * tests collision lives here rather than in `step`, so it always runs at a
+   * bounded dt — see CFG.SUBSTEP_DT for why that is load-bearing.
+   */
+  function stepOnce(dt) {
     const stats = upgrades.stats;
 
     run.time += dt;
+    // The speed cap itself creeps past DIFFICULTY_DISTANCE, so there is no
+    // point at which the street stops getting faster.
+    const cap = Math.min(
+      CFG.ABSOLUTE_MAX_SPEED,
+      CFG.MAX_SPEED
+        + Math.max(0, run.distance - CFG.DIFFICULTY_DISTANCE) / CFG.ENDLESS_SPEED_DIV
+    );
     run.speed = Math.min(
-      CFG.MAX_SPEED,
+      cap,
       CFG.BASE_SPEED + run.time * CFG.SPEED_RAMP * stats.speedRampScale
     );
 
     const moved = run.speed * dt;
     run.distance += moved;
-    run.score += moved * CFG.SCORE_PER_METRE * stats.scoreMult;
+    award(moved * CFG.SCORE_PER_METRE);
+
+    // Combo decay. Expiring costs nothing already banked — it just ends the
+    // chain, so the pressure is to keep engaging rather than to avoid loss.
+    if (run.combo > 0) {
+      run.comboTimer -= dt;
+      if (run.comboTimer <= 0) dropCombo(false);
+    }
 
     player.update(dt, input.isHeld('duck'));
     track.update(dt, run.speed, run.distance);
@@ -285,6 +389,30 @@ export function createGame({ canvas }) {
     if (player.grounded && !player.state.dead) {
       trailPos.set(player.x, 0.05, 0);
       fx.trail(trailPos, player.trailColour(upgrades.stacks), 26, dt);
+    }
+  }
+
+  function step(dt) {
+    // Split the frame so no single collision test can be outrun. A dropped
+    // frame therefore costs frame rate, never correctness.
+    const n = Math.max(1, Math.ceil(dt / CFG.SUBSTEP_DT));
+    const h = dt / n;
+    for (let i = 0; i < n; i++) {
+      stepOnce(h);
+      // A substep can kill the player or open a crate; stop simulating the
+      // moment we are no longer in a running state.
+      if (state !== STATE.PLAYING) return;
+    }
+
+    // --- things that only need deciding once per frame ---
+
+    const phaseIndex = Math.floor(run.distance / CFG.PHASE_LENGTH);
+    if (phaseIndex !== run.phaseIndex) {
+      run.phaseIndex = phaseIndex;
+      const phase = phaseFor(run.distance);
+      world.setPhase(phase, false);
+      ui.showPhaseBanner(phase.name);
+      audio.play('phase');
     }
 
     if (run.distance >= run.nextChoiceAt) {
@@ -316,7 +444,7 @@ export function createGame({ canvas }) {
         step(dt);
         fx.update(dt);
         world.updateCamera(player, dt, fx.updateShake(dt));
-        ui.updateHUD(run);
+        ui.updateHUD(run, comboMult(run.combo));
         break;
 
       case STATE.DYING:
@@ -344,6 +472,11 @@ export function createGame({ canvas }) {
         fx.update(dt * 0.4);
         break;
     }
+
+    // Phase colour fade and screen-space popups advance in every state, so
+    // neither freezes awkwardly on the choice screen or the death sequence.
+    world.updatePhase(dt);
+    ui.updatePopups(dt, world.camera);
 
     world.render();
     trackPerformance(dt);
@@ -405,6 +538,7 @@ export function createGame({ canvas }) {
     get state() { return state; },
     get run() { return run; },
     get best() { return best; },
+    get bestDist() { return bestDist; },
     // Hooks used by the verification harness.
     debugTriggerChoice: () => enterChoice(),
     debugKill: () => die(),

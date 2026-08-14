@@ -92,6 +92,12 @@ export function createPlayer(scene) {
     }
     s.ducking = true;
     s.duckTimer = CFG.DUCK_MIN_TIME + (stats ? stats.duckBonus : 0);
+    // Slam straight down to the road. Hovering otherwise holds the rider at
+    // HOVER_HEIGHT, and 0.75 + DUCK_HEIGHT sits *above* the gantry underside
+    // at 1.25 — so without this, Hover Deck would make every gantry lethal
+    // rather than merely harder. Snapping (rather than easing) keeps the
+    // hitbox honest: it can never disagree with what is drawn.
+    s.y = 0;
   }
 
   function endDuck() {
@@ -111,7 +117,10 @@ export function createPlayer(scene) {
     s.leanZ = Math.max(-1, Math.min(1, (targetX - s.x) / 2.4));
 
     // --- vertical ---
-    const hovering = stats && stats.hoverHeight > 0;
+    // Ducking suspends the hover, so a duck-slide always fits under a gantry.
+    // Float returns on its own once the duck window closes — that delay is
+    // the real cost of the upgrade.
+    const hovering = stats && stats.hoverHeight > 0 && !s.ducking;
     s.groundY = hovering ? CFG.HOVER_HEIGHT : 0;
     const g = CFG.GRAVITY * (hovering ? CFG.HOVER_GRAVITY_MULT : 1);
 
