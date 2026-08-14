@@ -98,6 +98,27 @@ export const CFG = Object.freeze({
   COMBO_NEAR_MISS: 2,
   COMBO_MILESTONE: 25,      // burst + popup every N points
 
+  // ---- rails & grinding ----
+  // A grind lasts RAIL_LEN / speed seconds. At the old 7-unit length that was
+  // 0.14s at full speed — over before the player registered it. 24 units puts
+  // it at 0.5–0.9s across the whole speed range, which is long enough to read
+  // as a trick rather than a bump.
+  RAIL_LEN: 24,
+  RAIL_HALF_LEN: 12,
+  RAIL_RIDE_Y: 1.75,        // bar centre 1.6 + half its 0.3 height
+  // Landing tolerance. The jump arc is above the rail while descending for
+  // only ~0.19s, but the player may attach anywhere along the rail's length,
+  // so the real window is the whole traversal. This just softens the edge.
+  GRIND_SNAP: 0.35,
+  // After stepping off deliberately the player is still directly above the
+  // bar and descending, which is exactly the condition for mounting — without
+  // a short lock-out, carving or dropping off would re-latch on the very next
+  // substep and the rail would be impossible to leave.
+  GRIND_REMOUNT_LOCK: 0.3,
+  GRIND_SCORE_PER_SEC: 220,
+  GRIND_MOUNT_SCORE: 40,
+  GRIND_COMBO_INTERVAL: 0.25,   // combo +1 this often while riding
+
   // ---- near miss ----
   // Measured outward from the contact width, so a "dodge" is a lane squeeze
   // that genuinely nearly hit, and a "clear" is a jump or duck that passed

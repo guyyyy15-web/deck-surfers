@@ -387,6 +387,7 @@ kbd {
 .popup[data-tone="ramp"]  { color: #7bff5d; }
 .popup[data-tone="near"]  { color: var(--gold); }
 .popup[data-tone="combo"] { color: var(--pink-hi); }
+.popup[data-tone="grind"] { color: #c98bff; }
 
 /* ---------------- new best ---------------- */
 

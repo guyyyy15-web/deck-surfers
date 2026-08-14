@@ -25,6 +25,7 @@ python3 -m http.server 8000
 | Change lane | `←` `→` or `A` `D` | swipe left / right |
 | Ollie / jump | `↑`, `W`, `Space` | swipe up, or tap |
 | Duck & slide | `↓`, `S` | swipe down |
+| Grind a rail | land on top of one | land on top of one |
 | Pick an upgrade | `1` `2` `3` | tap a card |
 | Pause | `Esc`, `P` | — |
 
@@ -47,6 +48,7 @@ together is the best.
 | Event | Combo |
 | --- | --- |
 | Coin | +1 |
+| Grinding | +1 every 0.25s |
 | Near miss | +2 |
 | Ramp | +3 |
 | Gem | +5 |
@@ -56,6 +58,27 @@ not enough: either you were still cutting across as you went by, or you were
 in its lane and got over or under it by less than half a unit. Wiping out or
 spending a shield ends the chain; letting it lapse costs nothing already
 banked.
+
+### Grinding
+
+Ollie onto a rail and you ride it. Grinding pays 220 points a second — before
+the combo multiplier — and ticks the combo every quarter second, so a full
+rail is worth roughly four coins on top of the points. Step off by jumping,
+carving into another lane, pressing down, or simply running out of rail.
+
+**The rail is still a wall.** It is only survivable from directly above: you
+have to be falling, with your feet at bar height. Come at it any other way and
+it kills you exactly as it always did. That risk is the whole reason a grind
+is worth points.
+
+Rails are 24 units long — at the old 7 a grind lasted 0.14s at full speed,
+which is a bump, not a trick. At 24 it runs 0.5–0.9s across the speed range.
+Rails also reserve road behind them so no obstacle can appear mid-grind, in a
+lane you are locked into.
+
+Rails stay dodge-only in the track planner, so **every rail row still
+guarantees a clear lane elsewhere** and grinding is purely an optional bonus
+route. That is what lets the fairness proof below stay exactly as it was.
 
 ### Phases
 
@@ -108,11 +131,11 @@ Each module owns one thing:
 | `js/voxel.js` | All mesh construction, from one shared box geometry |
 | `js/world.js` | Renderer, scene, camera, lights, sky, scrolling road |
 | `js/input.js` | Keyboard + touch → semantic actions |
-| `js/player.js` | **Player controller** — lanes, jump arc, duck, animation |
+| `js/player.js` | **Player controller** — lanes, jump arc, duck, grind, animation |
 | `js/track.js` | **Track generator** — rows, pooling, fairness validator |
 | `js/upgrades.js` | **Upgrade manager** — registry, rolling, stats folding |
 | `js/ui.js` | **UI renderer** — screens, HUD, cards, summary |
-| `js/collision.js` | AABB tests and the coin magnet |
+| `js/collision.js` | AABB tests, near misses, grind mounting, the coin magnet |
 | `js/fx.js` | Pooled particles, trails, screen shake |
 | `js/audio.js` | Synthesised SFX and the music loop |
 | `js/game.js` | State machine, run state, scoring, main loop |

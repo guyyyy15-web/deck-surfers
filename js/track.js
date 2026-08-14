@@ -331,8 +331,10 @@ export function createTrackGenerator(scene, rng) {
     prevRequiredJump = plan.requiredJump;
     prevRowZ = worldZ;
 
-    // Rails are long, so leave extra room behind them.
-    return usedRail ? 8 : 0;
+    // Rails are long, so leave room past the far end — otherwise the next row
+    // would spawn inside the rail and the player would meet an obstacle
+    // mid-grind, in a lane they are locked into.
+    return usedRail ? CFG.RAIL_HALF_LEN : 0;
   }
 
   function spawnScenery(worldZ) {
@@ -371,7 +373,10 @@ export function createTrackGenerator(scene, rng) {
       const m = obstacles[i];
       const z = -(m.userData.worldZ - distance);
       m.position.z = z;
-      if (z > CFG.DESPAWN_Z) {
+      // Measured from the near end, not the centre: a 24-unit rail whose
+      // centre has passed DESPAWN_Z still has half its length in front of the
+      // camera, and recycling it there would pop it out on screen.
+      if (z - m.userData.hz > CFG.DESPAWN_Z) {
         obstaclePools[m.userData.type].release(m);
         obstacles.splice(i, 1);
       }

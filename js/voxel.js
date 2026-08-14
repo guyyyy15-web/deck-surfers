@@ -187,11 +187,21 @@ export function buildObstacle(type) {
     }
     g.userData = { type, hx: 0.9, hz: 0.9, yMin: 0, yMax: 1.0, harmless: true };
   } else if (type === 'rail') {
-    addBox(g, 1.7, 0.3, 7, PAL.rail, 0, 1.6, 0);
-    addBox(g, 0.18, 1.6, 0.18, PAL.overhangPost, 0, 0.8, 3);
-    addBox(g, 0.18, 1.6, 0.18, PAL.overhangPost, 0, 0.8, -3);
-    addBox(g, 0.18, 1.6, 0.18, PAL.overhangPost, 0, 0.8, 0);
-    g.userData = { type, hx: 0.85, hz: 3.5, yMin: 0, yMax: 1.9 };
+    // Long enough to actually grind — see CFG.RAIL_LEN. The bar is lethal
+    // from the side; landing on top of it is what collision.js treats
+    // specially, and `rideY` is derived from the same numbers that draw the
+    // bar so the ride surface can't drift from the mesh.
+    const len = CFG.RAIL_LEN;
+    const half = len / 2;
+    addBox(g, 1.7, 0.3, len, PAL.rail, 0, 1.6, 0);
+    for (let z = -half; z <= half + 0.01; z += 6) {
+      addBox(g, 0.18, 1.6, 0.18, PAL.overhangPost, 0, 0.8, z);
+    }
+    g.userData = {
+      type, hx: 0.85, hz: half, yMin: 0, yMax: 1.9,
+      grindable: true,
+      rideY: 1.6 + 0.3 / 2,
+    };
   }
 
   return setShadow(g, true, true);

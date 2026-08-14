@@ -32,6 +32,9 @@ export function createPlayer(scene) {
     animT: 0,
     boardSpin: 0,
     boardSpinV: 0,
+    grinding: null,      // the rail mesh currently being ridden, or null
+    grindTime: 0,
+    grindCooldown: 0,    // blocks an instant re-latch after stepping off
   };
 
   let stats = null;
@@ -42,8 +45,56 @@ export function createPlayer(scene) {
     if (s.dead) return false;
     const next = Math.min(LANES.length - 1, Math.max(0, s.laneIndex + dir));
     if (next === s.laneIndex) return false;
+    // Carving off a rail steps you off it.
+    if (s.grinding) endGrind();
     s.laneIndex = next;
     return true;
+  }
+
+  /* ---------------- grinding ---------------- */
+
+  /** Latch onto a rail. collision.js decides *when*; this is the how. */
+  function startGrind(mesh) {
+    if (s.dead || s.grinding === mesh) return false;
+    const ud = mesh.userData;
+    s.grinding = mesh;
+    s.grindTime = 0;
+    s.y = ud.rideY;
+    s.vy = 0;
+    s.grounded = true;
+    s.jumpsUsed = 0;
+    s.boardSpin = 0;
+    s.boardSpinV = 0;
+    // A duck-slide makes no sense balanced on a rail, and leaving it set
+    // would drop the hitbox through the bar.
+    s.ducking = false;
+    s.duckTimer = 0;
+    if (typeof ud.lane === 'number') s.laneIndex = ud.lane;
+    return true;
+  }
+
+  /**
+   * Leave the rail airborne, whatever the reason — jumped off, carved off,
+   * or simply ran out of rail. Every exit lands here so gravity resumes from
+   * exactly one place.
+   */
+  function endGrind() {
+    if (!s.grinding) return;
+    s.grinding = null;
+    s.grounded = false;
+    s.vy = 0;
+    s.grindCooldown = CFG.GRIND_REMOUNT_LOCK;
+    // Running off the end shouldn't rob you of a jump you were about to make.
+    s.coyote = CFG.COYOTE_TIME;
+  }
+
+  function isGrinding(mesh) {
+    return mesh === undefined ? !!s.grinding : s.grinding === mesh;
+  }
+
+  /** Whether a rail may be latched onto right now. Read by collision.js. */
+  function canGrind() {
+    return !s.dead && !s.grinding && s.grindCooldown <= 0;
   }
 
   function canJump() {
@@ -62,7 +113,10 @@ export function createPlayer(scene) {
   }
 
   function doJump() {
+    // Grinding counts as grounded, so this reads false and the pop off a rail
+    // gets the full jump velocity.
     const air = !s.grounded && s.coyote <= 0;
+    if (s.grinding) endGrind();
     const v = (stats ? stats.jumpVelocity : CFG.JUMP_V) * (air ? CFG.AIR_JUMP_MULT : 1);
     s.vy = v;
     s.grounded = false;
@@ -84,6 +138,11 @@ export function createPlayer(scene) {
 
   function startDuck() {
     if (s.dead) return;
+    // Down while grinding reads as "drop off", not "crouch on the bar".
+    if (s.grinding) {
+      endGrind();
+      return;
+    }
     if (!s.grounded) {
       // Mid-air duck is a fast-fall, not a hitbox change — otherwise you
       // could cheese every gantry by tapping down while jumping over it.
@@ -116,12 +175,25 @@ export function createPlayer(scene) {
     s.x += (targetX - s.x) * (1 - Math.exp(-CFG.LANE_DAMP * dt));
     s.leanZ = Math.max(-1, Math.min(1, (targetX - s.x) / 2.4));
 
+    // --- grinding ---
+    if (s.grinding) {
+      const rail = s.grinding;
+      // The rail scrolls past at run speed. Once its far end is behind us
+      // there is nothing left to ride. The visible check is a safety net for
+      // a mesh recycled back into the pool underneath us.
+      if (!rail.visible || rail.position.z > rail.userData.hz) endGrind();
+      else s.grindTime += dt;
+    }
+
     // --- vertical ---
     // Ducking suspends the hover, so a duck-slide always fits under a gantry.
     // Float returns on its own once the duck window closes — that delay is
-    // the real cost of the upgrade.
-    const hovering = stats && stats.hoverHeight > 0 && !s.ducking;
-    s.groundY = hovering ? CFG.HOVER_HEIGHT : 0;
+    // the real cost of the upgrade. Grinding outranks both: the rail *is*
+    // the ground while you are on it.
+    const hovering = !s.grinding && stats && stats.hoverHeight > 0 && !s.ducking;
+    s.groundY = s.grinding
+      ? s.grinding.userData.rideY
+      : (hovering ? CFG.HOVER_HEIGHT : 0);
     const g = CFG.GRAVITY * (hovering ? CFG.HOVER_GRAVITY_MULT : 1);
 
     if (!s.grounded) {
@@ -146,6 +218,7 @@ export function createPlayer(scene) {
 
     s.buffer = Math.max(0, s.buffer - dt);
     s.invuln = Math.max(0, s.invuln - dt);
+    s.grindCooldown = Math.max(0, s.grindCooldown - dt);
 
     // --- duck window ---
     if (s.ducking) {
@@ -178,7 +251,20 @@ export function createPlayer(scene) {
     body.scale.y += (1 - duckK * 0.52 - body.scale.y) * Math.min(1, dt * 14);
     body.position.y += (-duckK * 0.06 - body.position.y) * Math.min(1, dt * 14);
 
-    if (s.grounded) {
+    if (s.grinding) {
+      // Grind stance: knees bent, board locked flat along the bar, arms flung
+      // wide for balance, with a slow sway so it never reads as frozen.
+      const sway = Math.sin(s.animT * 9) * 0.06;
+      legL.rotation.x = -0.5;
+      legR.rotation.x = -0.42;
+      armL.rotation.z = -2.0 + sway;
+      armR.rotation.z = 2.0 - sway;
+      armL.rotation.x = -0.15;
+      armR.rotation.x = -0.15;
+      torso.rotation.x = 0.3;
+      board.rotation.x = 0;
+      root.rotation.z += sway * 0.4;
+    } else if (s.grounded) {
       // Rolling stance: subtle pumping, arms out for balance.
       const f = s.animT * 7;
       legL.rotation.x = Math.sin(f) * 0.16 - 0.1;
@@ -265,6 +351,7 @@ export function createPlayer(scene) {
   function playDeath() {
     s.dead = true;
     s.ducking = false;
+    s.grinding = null;
     rig.root.visible = true;
   }
 
@@ -286,6 +373,11 @@ export function createPlayer(scene) {
     s.animT = 0;
     s.boardSpin = 0;
     s.boardSpinV = 0;
+    // Must not survive a restart: the mesh it points at is handed back to the
+    // track's pool by track.reset(), which runs just before this.
+    s.grinding = null;
+    s.grindTime = 0;
+    s.grindCooldown = 0;
 
     const { root, board, body } = rig;
     root.position.set(s.x, 0, 0);
@@ -307,12 +399,15 @@ export function createPlayer(scene) {
     get x() { return s.x; },
     get y() { return s.y; },
     get leanZ() { return s.leanZ; },
+    get vy() { return s.vy; },
     get grounded() { return s.grounded; },
     get ducking() { return s.ducking; },
     get laneIndex() { return s.laneIndex; },
     get invuln() { return s.invuln; },
     set invuln(v) { s.invuln = v; },
+    get grindTime() { return s.grindTime; },
     moveLane, requestJump, launch, startDuck, endDuck,
+    startGrind, endGrind, isGrinding, canGrind,
     update, applyStats, trailColour, getAABB, playDeath, reset,
   };
 }
