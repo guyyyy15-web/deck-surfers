@@ -167,9 +167,16 @@ export function buildPlayer() {
    */
 
   const body = new THREE.Group();
-  // Ridden side-on. The head is yawed back the other way further down so he
-  // still looks where he is going.
-  body.rotation.y = 0.52;
+  /*
+   * The body is square to the board, and the twist lives at the *waist*
+   * instead (see `torso` below).
+   *
+   * Yawing the whole body rotated the leg *positions* along with it, which
+   * silently turned a stance staggered along the deck into one spread across
+   * it: pivots authored at x ±0.1 / z ±0.45 came out at x ±0.30 / z ±0.35,
+   * hanging both shoes off the sides of a deck only ±0.36 wide. Twisting only
+   * the torso moves the shoulders without touching a single foot.
+   */
 
   /*
    * Heights are worked backwards from two fixed numbers, and must stay that
@@ -200,6 +207,8 @@ export function buildPlayer() {
   // hips into a crouch takes the chest and head down with it. This is the
   // whole reason ducking can be a real crouch instead of a scale squash.
   const torso = new THREE.Group();
+  // The skate twist: hips and feet stay square to the board, the chest turns.
+  torso.rotation.y = CFG.RIG.TORSO_YAW;
   hips.add(torso);
   part(torso, 'shirt', 0.56, 0.42, 0.36, PAL.shirt, 0, 0.19, 0);
   // A neck. Without it the head sat straight on the collar and he read as
@@ -220,8 +229,10 @@ export function buildPlayer() {
   // so the pitch in the ride pose pushed the measured crown over
   // STAND_HEIGHT. Tuned against the measurement, not the arithmetic.
   const head = new THREE.Group();
-  head.position.y = 0.44;
-  head.rotation.y = -0.52;              // cancels the body yaw: eyes forward
+  head.position.y = 0.43;
+  // Mostly undoes the waist twist so he watches the road, but not entirely —
+  // a head snapped perfectly forward off twisted shoulders looks robotic.
+  head.rotation.y = -CFG.RIG.TORSO_YAW * 0.78;
   torso.add(head);
   part(head, 'skin', 0.33, 0.26, 0.32, PAL.skin, 0, 0.13, 0);
   part(head, 'hair', 0.35, 0.06, 0.34, PAL.hair, 0, 0.225, 0);
@@ -261,16 +272,29 @@ export function buildPlayer() {
     return { upper, lower, end };
   }
 
-  // Feet staggered along the board over the trucks rather than side by side.
-  // Lower legs are wider than thighs, so the trousers read as baggy.
+  /*
+   * Stance, authored directly in board space now that nothing above rotates
+   * it. Nose is -Z, the direction of travel.
+   *
+   * The shoe box is wide in X and shallow in Z, because a skater's feet point
+   * *across* the deck, not along it — the previous 0.27 × 0.42 had him stood
+   * on it like he was waiting for a bus. Both feet sit near the centreline in
+   * X and are separated along Z instead, which is the only way two size-nines
+   * fit on a 0.72-wide board.
+   *
+   * Named by end of the board rather than by side: `legL` at +X was actually
+   * his right leg (he faces -Z, so +X is his right), and that inversion is
+   * what put the feet the wrong way round.
+   */
   const legCfg = {
     upperSlot: 'pants', upperW: 0.23, upperH: THIGH, upperD: 0.26, upperHex: PAL.pants,
-    lowerSlot: 'pants', lowerW: 0.26, lowerH: SHIN, lowerD: 0.29, lowerHex: PAL.pants,
-    endSlot: 'shoes', endW: 0.27, endH: 0.12, endD: 0.42, endHex: PAL.shoes,
-    endZ: 0.05, soleSlot: 'shoeSole', soleHex: PAL.shoeSole,
+    lowerSlot: 'pants', lowerW: 0.26, lowerH: SHIN, lowerD: 0.28, lowerHex: PAL.pants,
+    endSlot: 'shoes', endW: 0.38, endH: 0.12, endD: 0.26, endHex: PAL.shoes,
+    soleSlot: 'shoeSole', soleHex: PAL.shoeSole,
   };
-  const legL = limb(hips, { ...legCfg, x: 0.1, y: 0, z: 0.46 });
-  const legR = limb(hips, { ...legCfg, x: -0.08, y: 0, z: -0.44 });
+  // Right foot forward, on the nose; left foot back, over the tail.
+  const legFront = limb(hips, { ...legCfg, x: 0.09, y: 0, z: -CFG.RIG.HIP_Z });
+  const legBack = limb(hips, { ...legCfg, x: -0.09, y: 0, z: CFG.RIG.HIP_Z });
 
   const armCfg = {
     upperSlot: 'shirt', upperW: 0.17, upperH: 0.24, upperD: 0.19, upperHex: PAL.shirt,
@@ -346,7 +370,7 @@ export function buildPlayer() {
 
   return {
     root, board, deck, wheels, body, hipRoot, hips,
-    legL, legR, torso, armL, armR, head,
+    legFront, legBack, torso, armL, armR, head,
     shield, hoverRing, magnetRing,
     slots, applySkin, setSlot,
   };

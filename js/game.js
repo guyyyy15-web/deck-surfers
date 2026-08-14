@@ -473,6 +473,17 @@ export function createGame({ canvas }) {
     updateGrind(dt);
     if (wasGrinding && !player.isGrinding()) finishGrind();
 
+    // A trick only pays once the wheels are back down and the rotation
+    // actually finished — player.js banks it, this collects it.
+    const landed = player.takeLandedTrick();
+    if (landed) {
+      award(CFG.TRICK_SCORE);
+      bumpCombo(CFG.TRICK_COMBO);
+      audio.play('trick');
+      fx.burst(player.rig.root.position, PAL.multi, 18, { speed: 4.5, ttl: 0.5 });
+      ui.popup(landed.name, player.rig.root.position, 'trick');
+    }
+
     // Board trail — colour follows the active upgrades. Grinding has its own
     // sparks, so this would only double up.
     if (player.grounded && !player.state.dead && !player.isGrinding()) {

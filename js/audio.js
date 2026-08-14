@@ -109,6 +109,12 @@ export function createAudio() {
       tone({ type: 'square', from: 1175, to: 1175, dur: 0.1, gain: 0.2, delay: 0.06 });
     },
     comboDrop: () => tone({ type: 'triangle', from: 520, to: 240, dur: 0.16, gain: 0.14 }),
+    // Landing a trick: the slap of the deck, then a bright confirmation.
+    trick: () => {
+      noise({ dur: 0.1, gain: 0.32, freq: 900, q: 1.2, type: 'lowpass' });
+      tone({ type: 'square', from: 660, to: 660, dur: 0.07, gain: 0.2, delay: 0.04 });
+      tone({ type: 'square', from: 1047, to: 1047, dur: 0.13, gain: 0.2, delay: 0.11 });
+    },
     // The clack of trucks landing on the bar.
     grindOn: () => {
       noise({ dur: 0.07, gain: 0.3, freq: 1800, q: 2 });
