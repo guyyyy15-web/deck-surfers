@@ -29,24 +29,57 @@
  * @param rest      the pose a channel falls back to when the active pose
  *                  does not mention it. Without this, a channel set by one
  *                  state would stay stuck at that value in every state after.
+ * @param springs   name → { k, d }. Listed channels overshoot and settle
+ *                  instead of easing; see blend().
  */
-export function createPoseMachine(channels, rest = {}) {
+export function createPoseMachine(channels, rest = {}, springs = {}) {
   const names = Object.keys(channels);
   const current = {};
   const additive = {};
+  const velocity = {};
 
   for (const n of names) {
     current[n] = rest[n] || 0;
     additive[n] = 0;
+    velocity[n] = 0;
   }
 
-  /** Ease every channel toward `pose`, falling back to `rest`. */
+  /**
+   * Ease every channel toward `pose`, falling back to `rest`.
+   *
+   * Channels listed in `springs` integrate a velocity instead of easing, so
+   * they *overshoot* the target and settle back. A damped ease can only ever
+   * decelerate into place, which is why arms driven by it read as mechanical
+   * however well the poses are authored — follow-through is most of what
+   * "fluid" means. Everything else keeps the plain ease, and the legs
+   * deliberately so: they are IK-solved against the deck, and overshoot there
+   * would lift the soles off the board or drive them through it.
+   *
+   * Semi-implicit Euler is safe here because this runs once per *substep*
+   * (dt ≤ CFG.SUBSTEP_DT), not once per frame.
+   */
   function blend(pose, dt, rate = 12) {
     const k = 1 - Math.exp(-rate * dt);
     for (const n of names) {
       const target = pose[n] !== undefined ? pose[n] : (rest[n] || 0);
-      current[n] += (target - current[n]) * k;
+      const spring = springs[n];
+      if (spring) {
+        const accel = spring.k * (target - current[n]) - spring.d * velocity[n];
+        velocity[n] += accel * dt;
+        current[n] += velocity[n] * dt;
+      } else {
+        current[n] += (target - current[n]) * k;
+      }
     }
+  }
+
+  /**
+   * Give a spring channel a shove — the whip on a jump, say. Only meaningful
+   * for channels listed in `springs`; a damped channel has no velocity to
+   * carry, so this would silently do nothing.
+   */
+  function impulse(name, amount) {
+    if (springs[name]) velocity[name] += amount;
   }
 
   /** Snap straight to a pose — used on reset, so a run never opens mid-blend. */
@@ -54,6 +87,9 @@ export function createPoseMachine(channels, rest = {}) {
     for (const n of names) {
       current[n] = pose[n] !== undefined ? pose[n] : (rest[n] || 0);
       additive[n] = 0;
+      // Must be cleared too, or a restart inherits the last run's momentum
+      // and the rider opens mid-flail.
+      velocity[n] = 0;
     }
   }
 
@@ -72,7 +108,7 @@ export function createPoseMachine(channels, rest = {}) {
   }
 
   return {
-    blend, snap, add, commit,
+    blend, snap, add, commit, impulse,
     /** Read a blended channel — handy for tests and for driving FX. */
     get: (name) => current[name],
   };

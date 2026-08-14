@@ -228,7 +228,28 @@ kickflip and a shove-it sharing one progress value.
 
 **A trick only pays if you land it.** The rotation has to finish before the
 wheels touch down, and bailing forfeits it — which is what makes the airtime
-worth watching rather than just a gap in the obstacles.
+worth watching rather than just a gap in the obstacles. The three slowest —
+tre flip, 360 shove-it, impossible — have the hang time for a **grab**: a hand
+comes down onto the deck partway through and lets go before landing. You grab
+by tucking the board up to your hand, not by stretching down to it, so the
+airborne poses lift the deck with the knees.
+
+**The arms are the counterweight.** They lead every action: thrown up on the
+pop, reaching across the nose on a carve while the shoulders wind against the
+hips, flung wide to catch a landing, drifting constantly on two out-of-phase
+frequencies so the idle never lands on a metronome beat.
+
+Two things were in the way of that. The arm rotation sign was **inverted in
+every pose** — measured, `shz -0.66` pulled a hand *in* to `x 0.08` across the
+chest where `+0.66` puts it out at `0.62` — so the arms were folded inside the
+hoodie and no amount of animation would have shown. And the pose blend was a
+critically-damped ease, which can only decelerate into a target; limbs need to
+overshoot and settle. `pose.js` now supports **spring channels** that integrate
+a velocity, so arms, shoulders and head whip past their target and come back.
+`impulse()` kicks that velocity directly for the pop.
+
+The legs are deliberately *not* springs: they are IK-solved against the deck,
+and overshoot there would lift the soles off the board.
 
 **Heights are load-bearing.** The soles sit on the deck top and the cap tops
 out at `CFG.STAND_HEIGHT`; `CFG.RIG` holds the skeleton so `voxel.js` (which
