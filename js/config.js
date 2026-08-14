@@ -11,6 +11,9 @@
 
 export const LANES = [-2.4, 0, 2.4];
 
+/** One full turn. Tricks are all whole rotations, so this reads better. */
+const TAU = Math.PI * 2;
+
 export const IS_COARSE =
   typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 
@@ -46,14 +49,28 @@ export const CFG = Object.freeze({
   LAND_SQUASH_TIME: 0.28,   // how long the landing dip takes to decay
 
   // Rider skeleton. Shared by voxel.js (which builds the bones) and player.js
-  // (which solves them), so the two can never drift apart. Heights are chosen
-  // so that with the legs straight the soles rest exactly on the deck:
-  //   HIP_Y - (THIGH + SHIN) == ANKLE_Y
+  // (which solves them), so the two can never drift apart.
+  //
+  // THIGH + SHIN (0.68) is deliberately LONGER than the hip-to-ankle drop
+  // (0.925 - 0.365 = 0.56). A leg just long enough to stand straight has no
+  // length spare to reach fore and aft, and the solver spent it all clamping:
+  // the feet came up short of the trucks and hovered above the deck. The extra
+  // 0.12 is what lets him stand with his knees bent, like a skater, and still
+  // put a foot on each end of the board.
   RIG: Object.freeze({
     HIP_Y: 0.925,
-    THIGH: 0.3,
-    SHIN: 0.26,
+    THIGH: 0.36,
+    SHIN: 0.32,
     ANKLE_Y: 0.365,         // deck top 0.245 + the shoe's 0.12
+    // The skate twist, at the waist. Applied to the torso alone — putting it
+    // on the whole body is what dragged the feet off the sides of the deck.
+    TORSO_YAW: 1.13,        // ~65°
+    // Where each sole lands along the board. Nose is -Z (direction of
+    // travel), so the right foot is the front foot.
+    FOOT_Z_FRONT: -0.52,
+    FOOT_Z_BACK: 0.52,
+    // Hip pivots stay near the pelvis; the legs splay out to the feet above.
+    HIP_Z: 0.14,
   }),
 
   DUCK_MIN_TIME: 0.55,
@@ -135,6 +152,11 @@ export const CFG = Object.freeze({
   GRIND_SCORE_PER_SEC: 220,
   GRIND_MOUNT_SCORE: 40,
   GRIND_COMBO_INTERVAL: 0.25,   // combo +1 this often while riding
+
+  // ---- air tricks ----
+  // Paid only on a clean landing, so bailing mid-rotation is worth nothing.
+  TRICK_SCORE: 120,
+  TRICK_COMBO: 4,
 
   // ---- near miss ----
   // Measured outward from the contact width, so a "dodge" is a lane squeeze
@@ -238,6 +260,41 @@ export const PHASES = Object.freeze([
     weights: { barrier: 2, low: 4, high: 3, ramp: 2, rail: 3 },
   },
 ]);
+
+/**
+ * Air tricks.
+ *
+ * The deck's long axis is Z and its cross axis is X, so real tricks map
+ * straight onto the three rotations with no fudging:
+ *
+ *   z — roll about the length      → kickflip / heelflip
+ *   y — spin flat about vertical   → shove-its
+ *   x — end over end               → impossible
+ *
+ * `weight` biases the pick so the simple ones come up most; `dur` is how long
+ * the rotation takes, and is what decides whether it can be completed before
+ * touching down. A trick only pays out if it finishes before the wheels do.
+ */
+export const TRICKS = Object.freeze([
+  { name: 'KICKFLIP', x: 0, y: 0, z: TAU, dur: 0.42, weight: 5 },
+  { name: 'HEELFLIP', x: 0, y: 0, z: -TAU, dur: 0.42, weight: 4 },
+  { name: 'POP SHOVE-IT', x: 0, y: -Math.PI, z: 0, dur: 0.36, weight: 4 },
+  { name: '360 SHOVE-IT', x: 0, y: -TAU, z: 0, dur: 0.5, weight: 2 },
+  { name: 'TRE FLIP', x: 0, y: -TAU, z: TAU, dur: 0.55, weight: 1 },
+  { name: 'IMPOSSIBLE', x: TAU, y: 0, z: 0, dur: 0.5, weight: 1 },
+]);
+
+/** Weighted pick from TRICKS. Uses Math.random — nothing here is replayed. */
+export function pickTrick() {
+  let total = 0;
+  for (const t of TRICKS) total += t.weight;
+  let r = Math.random() * total;
+  for (const t of TRICKS) {
+    r -= t.weight;
+    if (r <= 0) return t;
+  }
+  return TRICKS[0];
+}
 
 /** The phase a given distance falls in. Cycles forever. */
 export function phaseFor(distance) {

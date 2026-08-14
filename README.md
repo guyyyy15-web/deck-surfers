@@ -200,12 +200,35 @@ them. The rule is `value = damp(current → target) + additive`.
 Two details do most of the work. **The legs are solved, not posed**: a two-bone
 IK keeps the soles on the deck at any hip height, so a crouch folds the knees
 instead of pushing the feet through the road, and a pose only has to say how
-low to sit. And **the board rolls onto its edge** through a lane change, which
-is the clearest "he is riding this thing" cue there is.
+low to sit. The solve takes a horizontal offset too, because the feet are
+staggered to the ends of the board while the hips stay near its middle — and
+`THIGH + SHIN` is deliberately longer than the hip-to-ankle drop, since a leg
+just long enough to stand straight has no length spare to reach fore and aft.
+And **the board rolls onto its edge** through a lane change, which is the
+clearest "he is riding this thing" cue there is.
 
-He rides side-on with his feet staggered over the trucks, because skaters do.
+**The twist is at the waist, not the whole body.** Hips and feet stay square
+to the board and only the torso turns (~65°), with the head turned back to
+watch the road. Yawing the whole body instead rotates the leg *positions*
+along with it: pivots authored at `x ±0.1 / z ±0.45` came out at
+`x ±0.30 / z ±0.35`, hanging both shoes off the sides of a deck only `±0.36`
+wide while shrinking the fore-aft stagger. Right foot on the nose, left on the
+tail, both shoes turned across the deck — a skater's feet point across the
+board, not along it.
+
 The camera never leaves his back, so the restyle spends its budget there: a
 backwards cap, a hood, a backpack.
+
+**Air tricks.** The deck's long axis is Z and its cross axis is X, so real
+tricks map straight onto the three rotations with no fudging — a kickflip is a
+roll about the length, a shove-it is a spin about vertical, an impossible goes
+end over end. Every jump throws one from a weighted table (kickflip, heelflip,
+pop shove-it, 360 shove-it, tre flip, impossible); a tre flip is simply a
+kickflip and a shove-it sharing one progress value.
+
+**A trick only pays if you land it.** The rotation has to finish before the
+wheels touch down, and bailing forfeits it — which is what makes the airtime
+worth watching rather than just a gap in the obstacles.
 
 **Heights are load-bearing.** The soles sit on the deck top and the cap tops
 out at `CFG.STAND_HEIGHT`; `CFG.RIG` holds the skeleton so `voxel.js` (which

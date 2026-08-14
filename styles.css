@@ -427,6 +427,7 @@ kbd {
 .popup[data-tone="near"]  { color: var(--gold); }
 .popup[data-tone="combo"] { color: var(--pink-hi); }
 .popup[data-tone="grind"] { color: #c98bff; }
+.popup[data-tone="trick"] { color: #7bff5d; letter-spacing: 0.12em; }
 
 /* ---------------- new best ---------------- */
 

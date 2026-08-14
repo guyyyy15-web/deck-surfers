@@ -7,7 +7,7 @@
  * knowing which upgrades exist.
  */
 
-import { CFG, LANES, PAL } from './config.js';
+import { CFG, LANES, PAL, pickTrick } from './config.js';
 import { buildPlayer } from './voxel.js';
 import { createPoseMachine } from './pose.js';
 
@@ -21,14 +21,18 @@ import { createPoseMachine } from './pose.js';
  */
 const REST = {
   'hips.y': 0, 'hips.rx': 0,
-  'torso.rx': 0.1, 'torso.rz': 0, 'head.rx': 0, 'head.ry': -0.52,
-  'legL.hip': -0.12, 'legL.knee': 0.2, 'legL.foot': -0.08,
-  'legR.hip': -0.06, 'legR.knee': 0.16, 'legR.foot': -0.06,
+  // head.ry must track the waist twist the rig applies. REST is written over
+  // the rig's own value every frame, so a stale number here would leave him
+  // riding along looking off to one side.
+  'torso.rx': 0.1, 'torso.rz': 0, 'head.rx': 0,
+  'head.ry': -CFG.RIG.TORSO_YAW * 0.78,
+  'legF.hip': -0.12, 'legF.knee': 0.2, 'legF.foot': -0.08,
+  'legB.hip': -0.06, 'legB.knee': 0.16, 'legB.foot': -0.06,
   // Held well clear of the body: tucked in, the arms merged into the hoodie
   // and he read as a single block with no limbs.
   'armL.sh': 0, 'armL.shz': -0.66, 'armL.elb': -0.32,
   'armR.sh': 0, 'armR.shz': 0.66, 'armR.elb': -0.32,
-  'board.rx': 0, 'board.rz': 0,
+  'board.rx': 0, 'board.ry': 0, 'board.rz': 0,
 };
 
 const POSES = {
@@ -36,8 +40,8 @@ const POSES = {
   ride: {
     ...REST,
     'hips.y': -0.02,
-    'legL.hip': -0.2, 'legL.knee': 0.34,
-    'legR.hip': -0.1, 'legR.knee': 0.26,
+    'legF.hip': -0.2, 'legF.knee': 0.34,
+    'legB.hip': -0.1, 'legB.knee': 0.26,
     'torso.rx': 0.14,
   },
   // Duck-slide: a real crouch — hips drop, knees fold hard, chest over the
@@ -49,9 +53,11 @@ const POSES = {
     // on the deck; the solver clamps below that, so going lower buys nothing.
     // The leg angles here are only used mid-air — on the ground solveLeg()
     // owns them.
-    'hips.y': -0.44, 'hips.rx': 0.14,
-    'legL.hip': -1.0, 'legL.knee': 1.5, 'legL.foot': 0.25,
-    'legR.hip': -0.92, 'legR.knee': 1.44, 'legR.foot': 0.24,
+    // hips.rx kept small: the solver works in the un-rotated hip frame, so
+    // pitching the pelvis tips one ankle up and the other down into the deck.
+    'hips.y': -0.44, 'hips.rx': 0.04,
+    'legF.hip': -1.0, 'legF.knee': 1.5, 'legF.foot': 0.25,
+    'legB.hip': -0.92, 'legB.knee': 1.44, 'legB.foot': 0.24,
     // He still lifts his eyes to see the road, but only just — craning the
     // head back is what put the cap up above the gantry line.
     'torso.rx': 1.2, 'head.rx': -0.42,
@@ -62,8 +68,8 @@ const POSES = {
   pop: {
     ...REST,
     'hips.y': 0.06,
-    'legL.hip': 0.1, 'legL.knee': 0.06,
-    'legR.hip': 0.14, 'legR.knee': 0.05,
+    'legF.hip': 0.1, 'legF.knee': 0.06,
+    'legB.hip': 0.14, 'legB.knee': 0.05,
     'torso.rx': -0.1,
     'armL.shz': -1.5, 'armL.sh': -0.6,
     'armR.shz': 1.5, 'armR.sh': -0.6,
@@ -72,8 +78,8 @@ const POSES = {
   float: {
     ...REST,
     'hips.y': -0.08,
-    'legL.hip': -0.95, 'legL.knee': 1.15, 'legL.foot': 0.2,
-    'legR.hip': -0.85, 'legR.knee': 1.05, 'legR.foot': 0.18,
+    'legF.hip': -0.95, 'legF.knee': 1.15, 'legF.foot': 0.2,
+    'legB.hip': -0.85, 'legB.knee': 1.05, 'legB.foot': 0.18,
     'torso.rx': 0.28,
     'armL.shz': -1.85, 'armL.sh': -0.35, 'armL.elb': -0.6,
     'armR.shz': 1.85, 'armR.sh': -0.35, 'armR.elb': -0.6,
@@ -82,8 +88,8 @@ const POSES = {
   grind: {
     ...REST,
     'hips.y': -0.2, 'hips.rx': 0.1,
-    'legL.hip': -0.7, 'legL.knee': 0.95,
-    'legR.hip': -0.6, 'legR.knee': 0.85,
+    'legF.hip': -0.7, 'legF.knee': 0.95,
+    'legB.hip': -0.6, 'legB.knee': 0.85,
     'torso.rx': 0.34,
     'armL.shz': -2.05, 'armL.elb': -0.15,
     'armR.shz': 2.05, 'armR.elb': -0.15,
@@ -91,8 +97,8 @@ const POSES = {
   // Wiped out — limbs let go.
   bail: {
     ...REST,
-    'legL.hip': -1.4, 'legL.knee': 0.9,
-    'legR.hip': -0.6, 'legR.knee': 1.4,
+    'legF.hip': -1.4, 'legF.knee': 0.9,
+    'legB.hip': -0.6, 'legB.knee': 1.4,
     'torso.rx': -0.5,
     'armL.shz': -2.4, 'armL.sh': -1.2,
     'armR.shz': 2.4, 'armR.sh': -1.2,
@@ -113,12 +119,12 @@ export function createPlayer(scene) {
     'head.rx': { obj: rig.head.rotation, key: 'x' },
     'head.ry': { obj: rig.head.rotation, key: 'y' },
 
-    'legL.hip': { obj: rig.legL.upper.rotation, key: 'x' },
-    'legL.knee': { obj: rig.legL.lower.rotation, key: 'x' },
-    'legL.foot': { obj: rig.legL.end.rotation, key: 'x' },
-    'legR.hip': { obj: rig.legR.upper.rotation, key: 'x' },
-    'legR.knee': { obj: rig.legR.lower.rotation, key: 'x' },
-    'legR.foot': { obj: rig.legR.end.rotation, key: 'x' },
+    'legF.hip': { obj: rig.legFront.upper.rotation, key: 'x' },
+    'legF.knee': { obj: rig.legFront.lower.rotation, key: 'x' },
+    'legF.foot': { obj: rig.legFront.end.rotation, key: 'x' },
+    'legB.hip': { obj: rig.legBack.upper.rotation, key: 'x' },
+    'legB.knee': { obj: rig.legBack.lower.rotation, key: 'x' },
+    'legB.foot': { obj: rig.legBack.end.rotation, key: 'x' },
 
     'armL.sh': { obj: rig.armL.upper.rotation, key: 'x' },
     'armL.shz': { obj: rig.armL.upper.rotation, key: 'z' },
@@ -128,6 +134,7 @@ export function createPlayer(scene) {
     'armR.elb': { obj: rig.armR.lower.rotation, key: 'x' },
 
     'board.rx': { obj: rig.board.rotation, key: 'x' },
+    'board.ry': { obj: rig.board.rotation, key: 'y' },
     'board.rz': { obj: rig.board.rotation, key: 'z' },
   }, REST);
 
@@ -148,8 +155,11 @@ export function createPlayer(scene) {
     invuln: 0,
     dead: false,
     animT: 0,
-    boardSpin: 0,
-    boardSpinV: 0,
+    // Air trick: the chosen entry, how far through it we are, and the trick
+    // banked by the last landing waiting to be collected by game.js.
+    trick: null,
+    trickT: 0,
+    landedTrick: null,
     grinding: null,      // the rail mesh currently being ridden, or null
     grindTime: 0,
     grindCooldown: 0,    // blocks an instant re-latch after stepping off
@@ -173,6 +183,26 @@ export function createPlayer(scene) {
     return true;
   }
 
+  /* ---------------- air tricks ---------------- */
+
+  /** Throw a trick. Ignored if one is already in the air. */
+  function startTrick() {
+    if (s.trick) return;
+    s.trick = pickTrick();
+    s.trickT = 0;
+  }
+
+  /**
+   * Hand over the trick landed since the last call, if any, and clear it.
+   * game.js pays it out — keeping the scoring there means the player module
+   * still knows nothing about combos or score.
+   */
+  function takeLandedTrick() {
+    const t = s.landedTrick;
+    s.landedTrick = null;
+    return t;
+  }
+
   /* ---------------- grinding ---------------- */
 
   /** Latch onto a rail. collision.js decides *when*; this is the how. */
@@ -185,8 +215,8 @@ export function createPlayer(scene) {
     s.vy = 0;
     s.grounded = true;
     s.jumpsUsed = 0;
-    s.boardSpin = 0;
-    s.boardSpinV = 0;
+    s.trick = null;
+    s.trickT = 0;
     // A duck-slide makes no sense balanced on a rail, and leaving it set
     // would drop the hitbox through the bar.
     s.ducking = false;
@@ -246,7 +276,10 @@ export function createPlayer(scene) {
     s.buffer = 0;
     s.jumpsUsed++;
     if (s.ducking) endDuck();
-    if (air) s.boardSpinV = Math.PI * 2 / 0.55;  // a full flip over the air time
+    // Every jump throws a trick, not just mid-air ones. Gating on `air` meant
+    // tricks needed the Double Jump upgrade to happen at all, so most runs
+    // would never see one outside of a ramp.
+    startTrick();
     return air;
   }
 
@@ -255,7 +288,7 @@ export function createPlayer(scene) {
     s.vy = v;
     s.grounded = false;
     s.jumpsUsed = 0;
-    s.boardSpinV = Math.PI * 2 / 0.7;
+    startTrick();
   }
 
   function startDuck() {
@@ -331,8 +364,11 @@ export function createPlayer(scene) {
         s.vy = 0;
         s.grounded = true;
         s.jumpsUsed = 0;
-        s.boardSpinV = 0;
-        s.boardSpin = 0;
+        // Only a completed rotation counts. Touching down halfway through one
+        // is a bail, and pays nothing.
+        if (s.trick && s.trickT >= s.trick.dur) s.landedTrick = s.trick;
+        s.trick = null;
+        s.trickT = 0;
         s.landT = CFG.LAND_SQUASH_TIME * Math.min(1, impact / 11);
         if (s.buffer > 0) doJump();   // buffered press lands as a jump
       }
@@ -346,6 +382,7 @@ export function createPlayer(scene) {
     s.invuln = Math.max(0, s.invuln - dt);
     s.grindCooldown = Math.max(0, s.grindCooldown - dt);
     s.landT = Math.max(0, s.landT - dt);
+    if (s.trick) s.trickT += dt;
 
     // --- duck window ---
     if (s.ducking) {
@@ -369,17 +406,30 @@ export function createPlayer(scene) {
    * `drop` is the pose's hips offset. Returns the angles that put the ankle
    * back on the board.
    */
-  const { HIP_Y, THIGH, SHIN, ANKLE_Y } = CFG.RIG;
+  const { HIP_Y, THIGH, SHIN, ANKLE_Y, FOOT_Z_FRONT, FOOT_Z_BACK, HIP_Z } = CFG.RIG;
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-  function solveLeg(drop, bias) {
-    // Distance from hip to ankle, clamped inside what the bones can span.
-    const d = clamp(HIP_Y + drop - ANKLE_Y, 0.1, THIGH + SHIN - 0.002);
+  /**
+   * `dz` is how far the ankle sits fore or aft of the hip pivot. The feet are
+   * staggered to the ends of the board while the hips stay near its middle,
+   * so each leg has to reach *out* along Z as well as down — solving only for
+   * a target directly below would leave the legs as two vertical posts and
+   * the feet nowhere near the trucks.
+   */
+  function solveLeg(drop, dz, hipZ) {
+    const dy = HIP_Y + drop - ANKLE_Y;             // hip is this far above the sole
+    const reach = dz - hipZ;
+    const d = clamp(Math.hypot(reach, dy), 0.1, THIGH + SHIN - 0.002);
+    // Direction of the straight line from hip to ankle, then swing the thigh
+    // off it by the angle the bones need.
+    const base = Math.atan2(reach, Math.max(dy, 0.01));
     const knee = Math.acos(clamp((THIGH * THIGH + SHIN * SHIN - d * d) / (2 * THIGH * SHIN), -1, 1));
-    const hip = Math.acos(clamp((THIGH * THIGH + d * d - SHIN * SHIN) / (2 * THIGH * d), -1, 1));
-    // Straight leg solves to 0/0; folding swings the thigh forward and the
-    // shin back, which is the direction a knee actually bends.
-    return { hip: -hip + bias, knee: Math.PI - knee };
+    const off = Math.acos(clamp((THIGH * THIGH + d * d - SHIN * SHIN) / (2 * THIGH * d), -1, 1));
+    const hip = -(base + off);
+    const kneeAngle = Math.PI - knee;
+    // The ankle cancels both, so the sole stays flat on the deck however far
+    // the knee is folded.
+    return { hip, knee: kneeAngle, foot: -(hip + kneeAngle) };
   }
 
   // Reused so the per-frame IK override allocates nothing.
@@ -419,6 +469,14 @@ export function createPlayer(scene) {
     root.visible = s.invuln <= 0 || Math.floor(s.invuln * 12) % 2 === 0;
 
     const t = targetPose();
+    const rolling = s.grounded && !s.ducking && !s.grinding;
+
+    // The ride bob is computed here rather than with the other additive layers
+    // because the solver needs it: it lifts and drops the hips, and legs
+    // solved against the un-bobbed height would push the soles through the
+    // deck on every down-beat.
+    const bobPhase = s.animT * 6.5;
+    const bob = rolling ? Math.sin(bobPhase) * 0.022 : 0;
 
     // With the feet on something, the legs are solved rather than posed. The
     // solve overrides the target *before* blending, not the rig afterwards,
@@ -426,17 +484,16 @@ export function createPlayer(scene) {
     // just channels in the same blend as everything else.
     let target = t.pose;
     if (s.grounded) {
-      const drop = t.pose['hips.y'] || 0;
-      const l = solveLeg(drop, 0.07);
-      const r = solveLeg(drop, -0.05);
+      const drop = (t.pose['hips.y'] || 0) + bob;
+      const f = solveLeg(drop, FOOT_Z_FRONT, -HIP_Z);
+      const b = solveLeg(drop, FOOT_Z_BACK, HIP_Z);
       for (const k in t.pose) solved[k] = t.pose[k];
-      solved['legL.hip'] = l.hip;
-      solved['legL.knee'] = l.knee;
-      solved['legR.hip'] = r.hip;
-      solved['legR.knee'] = r.knee;
-      // Ankles keep the shoes flat on the deck as the knees fold.
-      solved['legL.foot'] = -(l.hip + l.knee);
-      solved['legR.foot'] = -(r.hip + r.knee);
+      solved['legF.hip'] = f.hip;
+      solved['legF.knee'] = f.knee;
+      solved['legF.foot'] = f.foot;
+      solved['legB.hip'] = b.hip;
+      solved['legB.knee'] = b.knee;
+      solved['legB.foot'] = b.foot;
       target = solved;
     }
 
@@ -444,17 +501,14 @@ export function createPlayer(scene) {
 
     /* ---- additive layers, on top of the blend ---- */
 
-    const rolling = s.grounded && !s.ducking && !s.grinding;
-
-    // Ride bob: the loop that keeps him alive underneath everything else.
+    // Ride bob: the loop that keeps him alive underneath everything else. The
+    // hips offset was already folded into the solve above; the knees are left
+    // alone here for the same reason — the solver owns them while grounded.
     if (rolling) {
-      const f = s.animT * 6.5;
-      pose.add('hips.y', Math.sin(f) * 0.022);
-      pose.add('torso.rx', Math.sin(f + 0.7) * 0.05);
-      pose.add('legL.knee', Math.sin(f) * 0.1);
-      pose.add('legR.knee', -Math.sin(f) * 0.08);
-      pose.add('armL.shz', Math.sin(f + 1.2) * 0.07);
-      pose.add('armR.shz', -Math.sin(f + 1.2) * 0.07);
+      pose.add('hips.y', bob);
+      pose.add('torso.rx', Math.sin(bobPhase + 0.7) * 0.05);
+      pose.add('armL.shz', Math.sin(bobPhase + 1.2) * 0.07);
+      pose.add('armR.shz', -Math.sin(bobPhase + 1.2) * 0.07);
     }
 
     // Grind wobble: slower and wider than the ride bob — he is balancing.
@@ -480,18 +534,28 @@ export function createPlayer(scene) {
     if (s.landT > 0) {
       const k = s.landT / CFG.LAND_SQUASH_TIME;
       pose.add('hips.y', -0.16 * k);
-      pose.add('legL.knee', 0.5 * k);
-      pose.add('legR.knee', 0.45 * k);
+      pose.add('legF.knee', 0.5 * k);
+      pose.add('legB.knee', 0.45 * k);
       pose.add('torso.rx', 0.2 * k);
     }
 
     /* ---- the board ---- */
 
     if (!s.grounded && !s.grinding) {
-      s.boardSpin += s.boardSpinV * dt;
-      pose.add('board.rx', s.boardSpinV > 0
-        ? s.boardSpin
-        : Math.max(-0.5, Math.min(0.5, s.vy * 0.045)));
+      if (s.trick) {
+        // Ease the rotation rather than running it at a constant rate, so the
+        // board snaps round and settles instead of spinning like a fan. All
+        // three axes share one progress value, which is what lets a tre flip
+        // be a kickflip and a shove-it happening together.
+        const p = Math.min(1, s.trickT / s.trick.dur);
+        const e = p * p * (3 - 2 * p);
+        pose.add('board.rx', s.trick.x * e);
+        pose.add('board.ry', s.trick.y * e);
+        pose.add('board.rz', s.trick.z * e);
+      } else {
+        // No trick: the deck just noses with the arc of the jump.
+        pose.add('board.rx', Math.max(-0.5, Math.min(0.5, s.vy * 0.045)));
+      }
     }
     // Tips onto its edge through a turn. The single clearest "he is riding
     // this thing" cue, and it did not exist before.
@@ -568,6 +632,10 @@ export function createPlayer(scene) {
     s.dead = true;
     s.ducking = false;
     s.grinding = null;
+    // Bailing forfeits whatever was in the air, landed or not.
+    s.trick = null;
+    s.trickT = 0;
+    s.landedTrick = null;
     rig.root.visible = true;
   }
 
@@ -587,8 +655,9 @@ export function createPlayer(scene) {
     s.invuln = 0;
     s.dead = false;
     s.animT = 0;
-    s.boardSpin = 0;
-    s.boardSpinV = 0;
+    s.trick = null;
+    s.trickT = 0;
+    s.landedTrick = null;
     // Must not survive a restart: the mesh it points at is handed back to the
     // track's pool by track.reset(), which runs just before this.
     s.grinding = null;
@@ -636,6 +705,8 @@ export function createPlayer(scene) {
     get grindSnap() { return stats ? stats.grindSnap : CFG.GRIND_SNAP; },
     moveLane, requestJump, launch, startDuck, endDuck,
     startGrind, endGrind, isGrinding, canGrind,
+    startTrick, takeLandedTrick,
+    get trick() { return s.trick; },
     update, applyStats, trailColour, getAABB, playDeath, reset, setSkin,
   };
 }
