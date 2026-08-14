@@ -9,7 +9,7 @@
  */
 
 import * as THREE from '../vendor/three.module.min.js';
-import { CFG, PAL, phaseFor } from './config.js';
+import { CFG, PAL, SKINS, phaseFor } from './config.js';
 import { makeRng } from './rng.js';
 import { createWorld } from './world.js';
 import { createInput } from './input.js';
@@ -632,6 +632,13 @@ export function createGame({ canvas }) {
     debugTriggerChoice: () => enterChoice(),
     debugKill: () => die(),
     debugStats: () => ({ ...upgrades.stats }),
+    /** Try a rider skin: __RUNNER.setSkin('midnight'). Data lives in config. */
+    setSkin: (name) => {
+      const skin = SKINS[name];
+      if (!skin) return Object.keys(SKINS);
+      player.setSkin(skin);
+      return name;
+    },
     debugPools: () => track.poolSizes(),
     debugRender: () => world.stats(),
     selfTest: (n) => track.selfTest(n),

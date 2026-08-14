@@ -56,7 +56,10 @@ together is the best.
 
 A near miss is deliberately strict. Passing an obstacle in the next lane is
 not enough: either you were still cutting across as you went by, or you were
-in its lane and got over or under it by less than half a unit. Wiping out or
+in its lane and got over or under it by less than half a unit. The sideways
+test is a *margin beyond contact* rather than an absolute distance, so a wide
+barrier and a narrow rail demand the same real clearance — an absolute
+threshold is silently tied to whichever obstacle is widest. Wiping out or
 spending a shield ends the chain; letting it lapse costs nothing already
 banked.
 
@@ -76,6 +79,13 @@ Rails are 24 units long — at the old 7 a grind lasted 0.14s at full speed,
 which is a bump, not a trick. At 24 it runs 0.5–0.9s across the speed range.
 Rails also reserve road behind them so no obstacle can appear mid-grind, in a
 lane you are locked into.
+
+They are also *narrow* — a 0.26 handrail against a 0.72 deck. The first
+version was 1.7 wide, nearly two and a half board-widths, and read as a
+platform to stand on rather than an edge to balance on. The hitbox narrowed
+with it, which does not make rails safe: the player is lane-snapped, so being
+in a rail's lane still means dead-centre contact. It only stops the rail
+killing you when it visually missed.
 
 Rails stay dodge-only in the track planner, so **every rail row still
 guarantees a clear lane elsewhere** and grinding is purely an optional bonus
@@ -143,6 +153,7 @@ Each module owns one thing:
 | `js/config.js` | Every tunable constant, the colour palette and the phases |
 | `js/rng.js` | Seeded PRNG (makes the track self-test reproducible) |
 | `js/textures.js` | Canvas-painted textures — asphalt, paving, towers, cloud |
+| `js/pose.js` | Pose blending — damped joint targets plus additive layers |
 | `js/voxel.js` | All mesh construction, from one shared box geometry |
 | `js/world.js` | Renderer, scene, camera, lights, sky, scrolling road |
 | `js/input.js` | Keyboard + touch → semantic actions |
@@ -177,6 +188,36 @@ only darken.
 This made the game *cheaper*, not dearer. A tower used to be a box plus up to
 sixteen window-band boxes; it is now one textured box plus a bit of roof
 furniture, which took a typical frame from ~470 draw calls to ~290.
+
+**The rider is animated, not posed.** The old code assigned joint rotations
+straight onto the meshes every frame, so every state change snapped — nothing
+could feel like motion because nothing ever moved *between* two states. Now
+every channel eases toward whichever named pose the state asks for, and the
+loops that sell it — ride bob, carve lean, board roll, landing squash, grind
+wobble — are layered on top additively so the damping underneath cannot flatten
+them. The rule is `value = damp(current → target) + additive`.
+
+Two details do most of the work. **The legs are solved, not posed**: a two-bone
+IK keeps the soles on the deck at any hip height, so a crouch folds the knees
+instead of pushing the feet through the road, and a pose only has to say how
+low to sit. And **the board rolls onto its edge** through a lane change, which
+is the clearest "he is riding this thing" cue there is.
+
+He rides side-on with his feet staggered over the trucks, because skaters do.
+The camera never leaves his back, so the restyle spends its budget there: a
+backwards cap, a hood, a backpack.
+
+**Heights are load-bearing.** The soles sit on the deck top and the cap tops
+out at `CFG.STAND_HEIGHT`; `CFG.RIG` holds the skeleton so `voxel.js` (which
+builds the bones) and `player.js` (which solves them) cannot drift apart. If
+you restyle him, re-measure — art that quietly grows taller makes gantries
+lethal without a single hitbox number changing.
+
+**Skins are data.** Every mesh is registered under a slot — `skin`, `hair`,
+`shirt`, `pants`, `shoes`, `cap`, `pack`, `deck`, `wheels` — and
+`rig.applySkin()` recolours whole slots at once from the same `mat()` cache
+everything else uses. Adding a skin means adding an entry to `SKINS` in
+`config.js` and nothing else. Try them with `__RUNNER.setSkin('midnight')`.
 
 **The sky** is a gradient on the inside of a sphere, plus a sun disc with
 bloom, hash-based stars and a drifting cloud layer sampled from a baked
