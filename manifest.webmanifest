@@ -1,0 +1,18 @@
+{
+  "name": "נקמות שלי",
+  "short_name": "נקמות שלי",
+  "description": "האפליקציה לניהול נקמות קטנות וגדולות. הכל נשמר רק בטלפון שלך.",
+  "lang": "he",
+  "dir": "rtl",
+  "display": "standalone",
+  "orientation": "portrait",
+  "start_url": ".",
+  "scope": ".",
+  "background_color": "#fcf1e7",
+  "theme_color": "#fcf1e7",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

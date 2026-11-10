@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#150b32">
+<title>Deck Surfers — 3D Endless Skate Runner</title>
+<meta name="description" content="A voxel endless runner: carve three lanes on a skateboard, dodge, ollie and duck, and stack random rogue-lite upgrades that last exactly one run.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23150b32'/%3E%3Crect x='2' y='9' width='12' height='2' fill='%232ee6a8'/%3E%3Crect x='3' y='11' width='2' height='2' fill='%23ffd23f'/%3E%3Crect x='11' y='11' width='2' height='2' fill='%23ffd23f'/%3E%3Crect x='6' y='3' width='4' height='5' fill='%23ff3d6e'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<canvas id="game-canvas"></canvas>
+<div id="grade" aria-hidden="true"></div>
+
+<div id="ui">
+
+  <!-- ---------------- start screen ---------------- -->
+  <section data-screen="menu" class="screen screen-center">
+    <div class="menu">
+      <h1 class="wordmark"><span class="wm-a">DECK</span><span class="wm-b">SURFERS</span></h1>
+
+      <button type="button" id="btn-play" class="btn btn-gel">PLAY</button>
+
+      <div class="best-line">BEST <span id="menu-best">0</span></div>
+
+      <!-- one compact strip instead of a controls table -->
+      <ul class="ctrl-strip">
+        <li><b>&#8592;&#8594;</b><span>lane</span></li>
+        <li><b>&#8593;</b><span>ollie</span></li>
+        <li><b>&#8595;</b><span>duck</span></li>
+      </ul>
+
+      <button type="button" id="btn-howto" class="link-btn" aria-expanded="false" aria-controls="howto">HOW TO PLAY</button>
+
+      <div id="howto" class="howto" hidden>
+        <div class="howto-cols">
+          <div>
+            <h2>KEYS</h2>
+            <p><kbd>&larr;</kbd><kbd>&rarr;</kbd> or <kbd>A</kbd><kbd>D</kbd> — change lane</p>
+            <p><kbd>&uarr;</kbd> <kbd>W</kbd> <kbd>Space</kbd> — ollie</p>
+            <p><kbd>&darr;</kbd> <kbd>S</kbd> — duck &amp; slide</p>
+            <p><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> — pick upgrade</p>
+            <p><kbd>Esc</kbd> — pause</p>
+          </div>
+          <div>
+            <h2>TOUCH</h2>
+            <p>swipe &#8592;&#8594; — change lane</p>
+            <p>swipe &#8593; or tap — ollie</p>
+            <p>swipe &#8595; — duck &amp; slide</p>
+            <p>tap a card — pick upgrade</p>
+          </div>
+        </div>
+        <p class="howto-note">Every 250m the run pauses and offers three random upgrades.
+          They stack for the rest of the run — and reset the moment you wipe out.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------------- in-run HUD ---------------- -->
+  <section data-screen="hud" class="screen hidden" aria-live="off">
+    <div class="hud-top">
+      <div class="hud-score" id="hud-score">0</div>
+      <div class="hud-sub">
+        <span id="hud-distance">0m</span>
+        <span class="hud-coins"><i class="coin-dot"></i><span id="hud-coins">0</span></span>
+      </div>
+
+      <div class="combo" id="hud-combo" data-tier="0" hidden>
+        <div class="combo-mult" id="hud-combo-mult">&times;1.0</div>
+        <div class="combo-bar"><i id="hud-combo-fill"></i></div>
+      </div>
+    </div>
+
+    <div class="phase-banner" id="phase-banner" aria-hidden="true"></div>
+    <div class="popups" id="popups"></div>
+
+    <div class="hud-upgrades" id="hud-upgrades" aria-label="Active upgrades"></div>
+
+    <button type="button" id="btn-mute" class="btn-icon" aria-label="Toggle sound">&#9835;</button>
+  </section>
+
+  <!-- ---------------- upgrade choice ---------------- -->
+  <section data-screen="choice" class="screen screen-center hidden">
+    <div class="choice-wrap">
+      <h2 class="choice-title">PICK ONE</h2>
+      <p class="choice-sub">lasts until you wipe out</p>
+      <div class="cards" id="choice-cards"></div>
+      <p class="choice-hint">tap a card &middot; or press <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></p>
+    </div>
+  </section>
+
+  <!-- ---------------- game over ---------------- -->
+  <section data-screen="gameover" class="screen screen-center hidden">
+    <div class="menu">
+      <h2 class="over-title">WIPEOUT</h2>
+
+      <div class="over-score" id="over-score">0</div>
+      <div class="new-best" id="over-newbest" hidden>NEW BEST</div>
+
+      <div class="summary">
+        <div class="sum-row"><span>DISTANCE</span><b id="over-distance">0m</b></div>
+        <div class="sum-row"><span>COINS</span><b id="over-coins">0</b></div>
+        <div class="sum-row"><span>BEST COMBO</span><b id="over-combo">0</b></div>
+        <div class="sum-row"><span>BEST</span><b id="over-best">0</b></div>
+      </div>
+
+      <div class="upgrade-chips" id="over-upgrades"></div>
+
+      <button type="button" id="btn-restart" class="btn btn-gel">RUN IT BACK</button>
+      <p class="reset-note">all upgrades reset to zero</p>
+    </div>
+  </section>
+
+  <!-- ---------------- paused ---------------- -->
+  <section data-screen="paused" class="screen screen-center hidden">
+    <div class="menu menu-slim">
+      <h2 class="over-title">PAUSED</h2>
+      <button type="button" id="btn-resume" class="btn btn-gel">RESUME</button>
+    </div>
+  </section>
+
+</div>
+
+<noscript>
+  <div class="noscript">Deck Surfers needs JavaScript and WebGL. Open this page in a
+  current desktop or mobile browser.</div>
+</noscript>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
