@@ -48,8 +48,7 @@ document in Claude Docs. Same encrypted-groups design as נקמות שלי, but 
 - Never upload the site with wrangler from the cloud environment: its proxy replaces every `Authorization` header
   to api.cloudflare.com with the account token, and asset uploads need their own short-lived token. Pushing `main`
   publishes it. Never add a `wrangler.json`/`.jsonc` at the repo root: wrangler looks for those up the tree before
-  `.toml`, so it would shadow `server/wrangler.toml`. (A root `wrangler.toml` belongs to a leftover Worker
-  `hechatzer` from setup; it can go once that Worker is deleted in the dashboard.)
+  `.toml`, so it would shadow `server/wrangler.toml`.
 - Passkeys (saved ducklings) are tied to the address `hechatzer.pages.dev`. Moving to a custom domain later needs
   Related Origin Requests (`/.well-known/webauthn` on the new domain listing this one).
 - `fold()` in `chatzer/js/yard.js` owns permissions (author from the signature + current roles), like `groups.js`.
