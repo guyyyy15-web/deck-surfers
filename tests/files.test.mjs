@@ -32,3 +32,14 @@ test('the service worker leaves other pages under the same path alone (game/)', 
   assert.match(sw, /if \(rel !== '' && rel !== 'index.html' && !FILES.includes\(rel\)\) return/)
   assert.match(sw, /nekamot:\$\{SCOPE\}/)
 })
+
+test('the Content Security Policy allows the inline theme script (update the hash if it changes)', async () => {
+  const html = readFileSync(new URL('index.html', root), 'utf8')
+  const csp = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1]
+  const inline = html.match(/<script>([\s\S]*?)<\/script>/)[1]
+  const { createHash } = await import('node:crypto')
+  const hash = createHash('sha256').update(inline).digest('base64')
+  assert.ok(csp.includes(`'sha256-${hash}'`), `CSP must include 'sha256-${hash}'`)
+  assert.ok(csp.includes("connect-src 'self' https://nekamot-sync.guyyyy15-web.workers.dev"))
+  assert.ok(!/script-src[^;]*unsafe-inline/.test(csp), 'no unsafe-inline scripts')
+})

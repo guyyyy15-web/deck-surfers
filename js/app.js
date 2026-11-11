@@ -9,7 +9,7 @@ import { loadImage, toBlob, shrinkFile, photoUrl, rememberUrl, forgetUrl, blobTo
 import { IDEAS } from './ideas.js'
 import * as sync from './sync.js'
 
-export const APP_VERSION = '1.1.0'
+export const APP_VERSION = '1.1.1'
 
 const S = {
   list: [],

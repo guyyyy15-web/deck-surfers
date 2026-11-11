@@ -2,6 +2,10 @@ name = "nekamot-sync"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
+# Logs and errors in the Cloudflare dashboard (Workers → nekamot-sync → Logs). Bodies are never logged.
+[observability]
+enabled = true
+
 
 [vars]
 # Only the app's own address may call the API from a browser.
@@ -12,6 +16,7 @@ ALLOW_LOCALHOST = "0"
 binding = "DB"
 database_name = "nekamot-sync"
 database_id = "941dd83f-43f4-494f-a292-d45cdca03d7c"
+migrations_dir = "migrations"
 
 [[r2_buckets]]
 binding = "PHOTOS"

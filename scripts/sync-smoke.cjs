@@ -25,7 +25,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   const persist = fs.mkdtempSync(path.join(os.tmpdir(), 'nk-sync-e2e-'))
   const env = { ...process.env, CLOUDFLARE_API_TOKEN: 'local', CI: '1' }
   const d1 = (args) => execFileSync('npx', ['wrangler', 'd1', 'execute', 'nekamot-sync', '--local', '--persist-to', persist, ...args], { cwd: SERVER, env, stdio: 'pipe' }).toString()
-  d1(['--file', 'schema.sql'])
+  execFileSync('npx', ['wrangler', 'd1', 'migrations', 'apply', 'nekamot-sync', '--local', '--persist-to', persist], { cwd: SERVER, env, stdio: 'pipe' })
   const api = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(API_PORT), '--persist-to', persist, '--var', 'ALLOW_LOCALHOST:1'], { cwd: SERVER, env, detached: true, stdio: process.env.API_LOG ? ['ignore', fs.openSync(process.env.API_LOG, 'w'), fs.openSync(process.env.API_LOG, 'a')] : 'ignore' })
   const web = spawn(process.execPath, [path.join(__dirname, 'serve.cjs'), String(APP_PORT)], { stdio: 'ignore' })
   for (let i = 0; i < 120; i++) {

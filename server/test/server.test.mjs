@@ -16,7 +16,7 @@ let proc
 const wr = (args) => execFileSync('npx', ['wrangler', ...args], { cwd: dir, stdio: 'pipe', env: { ...process.env, CLOUDFLARE_API_TOKEN: 'local', CI: '1' } })
 
 before(async () => {
-  wr(['d1', 'execute', 'nekamot-sync', '--local', '--persist-to', persist, '--file', 'schema.sql'])
+  wr(['d1', 'migrations', 'apply', 'nekamot-sync', '--local', '--persist-to', persist])
   proc = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(PORT), '--persist-to', persist, '--var', 'ALLOW_LOCALHOST:1', '--var', 'ALLOWED_ORIGINS:https://guyyyy15-web.github.io'], {
     cwd: dir, detached: true, stdio: 'ignore', env: { ...process.env, CLOUDFLARE_API_TOKEN: 'local', CI: '1' },
   })
@@ -122,4 +122,26 @@ test('CORS: only the app and localhost', async () => {
   assert.equal(ok.headers.get('Access-Control-Allow-Origin'), 'https://guyyyy15-web.github.io')
   const bad = await fetch(`${BASE}/v1/health`, { method: 'OPTIONS', headers: { Origin: 'https://evil.example' } })
   assert.equal(bad.headers.get('Access-Control-Allow-Origin'), null)
+})
+
+test('security headers on every response', async () => {
+  const r = await fetch(`${BASE}/v1/health`)
+  assert.equal(r.headers.get('X-Content-Type-Options'), 'nosniff')
+  assert.equal(r.headers.get('Cache-Control'), 'no-store')
+  assert.equal(r.headers.get('Referrer-Policy'), 'no-referrer')
+  const e = await fetch(`${BASE}/v1/changes`)
+  assert.equal(e.headers.get('X-Content-Type-Options'), 'nosniff')
+})
+
+test('one client can create only 10 backups an hour', async () => {
+  const ip = { 'CF-Connecting-IP': '203.0.113.7', 'Content-Type': 'application/json' }
+  const codes = []
+  for (let i = 0; i < 11; i++) {
+    codes.push((await fetch(`${BASE}/v1/spaces`, { method: 'POST', headers: ip, body: JSON.stringify(newSpace()) })).status)
+  }
+  assert.deepEqual(codes.slice(0, 10), Array(10).fill(201))
+  assert.equal(codes[10], 429)
+  // Another client is not affected.
+  const other = await fetch(`${BASE}/v1/spaces`, { method: 'POST', headers: { ...ip, 'CF-Connecting-IP': '198.51.100.9' }, body: JSON.stringify(newSpace()) })
+  assert.equal(other.status, 201)
 })

@@ -12,6 +12,16 @@ const LIMITS = {
   spaceBytes: 300 * 1024 * 1024,
   // Stop well inside R2's free 10 GB so the account is never charged.
   totalBytes: 8 * 1024 * 1024 * 1024,
+  spacesPerClientPerHour: 10,
+  totalSpaces: 20000,
+}
+
+// Sent with every response.
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+  'Cache-Control': 'no-store',
+  'Cross-Origin-Resource-Policy': 'cross-origin',
 }
 
 const ID = /^[A-Za-z0-9_-]{6,64}$/
@@ -21,15 +31,17 @@ const TOKEN = /^[a-f0-9]{64}$/
 export default {
   async fetch(req, env) {
     const cors = corsHeaders(req, env)
-    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
+    const headers = { ...SECURITY_HEADERS, ...cors }
+    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers })
     try {
       const res = await route(req, env)
-      for (const [k, v] of Object.entries(cors)) res.headers.set(k, v)
+      for (const [k, v] of Object.entries(headers)) res.headers.set(k, v)
       return res
     } catch (err) {
-      if (err instanceof HttpError) return json({ error: err.message }, err.status, cors)
-      console.error(err)
-      return json({ error: 'server error' }, 500, cors)
+      if (err instanceof HttpError) return json({ error: err.message }, err.status, headers)
+      // Never log request bodies: they are ciphertext, but they are the users' data.
+      console.error(`${req.method} ${new URL(req.url).pathname}: ${err?.stack || err}`)
+      return json({ error: 'server error' }, 500, headers)
     }
   },
 }
@@ -106,6 +118,9 @@ async function route(req, env) {
   if (p === '/v1/spaces' && req.method === 'POST') {
     const body = await readJson(req, 1024)
     if (!SPACE.test(body?.space || '') || !TOKEN.test(body?.token || '')) fail(400, 'bad space')
+    await limit(env, req, 'spaces', LIMITS.spacesPerClientPerHour)
+    const total = await env.DB.prepare('SELECT COUNT(*) AS n FROM spaces').first('n')
+    if (total >= LIMITS.totalSpaces) fail(507, 'service full')
     const r = await env.DB.prepare('INSERT OR IGNORE INTO spaces (id, auth, seq, bytes, created_at) VALUES (?, ?, 0, 0, ?)')
       .bind(body.space, await sha256hex(body.token), Date.now())
       .run()
@@ -197,6 +212,21 @@ async function route(req, env) {
   }
 
   fail(404, 'not found')
+}
+
+/** At most `max` actions of this kind per client per hour. Clients are hashed IPs, rotated daily. */
+async function limit(env, req, kind, max) {
+  const ip = req.headers.get('CF-Connecting-IP') || 'local'
+  const hour = Math.floor(Date.now() / 3600000)
+  const day = Math.floor(hour / 24)
+  const key = `${kind}:${(await sha256hex(`${day}:${ip}`)).slice(0, 32)}`
+  const n = await env.DB.prepare(
+    'INSERT INTO rate_limits (key, window, count) VALUES (?, ?, 1) ON CONFLICT (key, window) DO UPDATE SET count = count + 1 RETURNING count',
+  )
+    .bind(key, hour)
+    .first('count')
+  if (Math.random() < 0.05) await env.DB.prepare('DELETE FROM rate_limits WHERE window < ?').bind(hour - 2).run()
+  if (n > max) fail(429, 'too many requests')
 }
 
 async function dropPhoto(env, space, id) {
