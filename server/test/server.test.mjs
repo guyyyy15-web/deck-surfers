@@ -394,6 +394,11 @@ test('push: old app versions (no notify) send nothing; mute; expired subscriptio
   await settle()
   assert.equal(sentTo(sc).length, 1, 'gone subscription not retried')
   assert.ok(pushed.length >= before)
+  // A test push goes to my own phones.
+  const t = await b.call('POST', '/v2/push/test', {})
+  assert.deepEqual([t.status, t.data.sent], [200, 1])
+  await settle()
+  assert.deepEqual(await decryptPush(sb, sentTo(sb).at(-1).body), { test: true })
   // Turning push off removes the subscription.
   assert.equal((await b.call('POST', '/v2/push/off', { endpoint: sb.endpoint })).status, 200)
   // An oversize notification is ignored, the events are still stored.

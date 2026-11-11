@@ -182,7 +182,7 @@ async function api(method, path, body, raw) {
 }
 
 /** Registers this phone's public keys with the server (once per identity). */
-async function register() {
+export async function register() {
   const { keys } = me()
   try {
     if (localStorage.getItem('nk.registered') === keys.memberId) return
@@ -223,11 +223,18 @@ export async function createGroup({ name, emoji }) {
 }
 const pick = (p) => ({ nickname: p.nickname, color: p.color, accessory: p.accessory })
 
-/** Adds events (queued locally first, so nothing is lost offline). */
-export async function post(gid, evs) {
+/**
+ * Adds events (queued locally first, so nothing is lost offline). `notify` = { body } asks the server to tell
+ * the other members; the text is encrypted with the group key, so only their phones can read it.
+ */
+export async function post(gid, evs, notify = null) {
   const rec = await db.getGroup(gid)
   const at = new Date().toISOString()
   rec.outbox = [...(rec.outbox || []), ...evs.map((ev) => ({ ...ev, at }))]
+  if (notify?.body) {
+    const st = stateOf(rec)
+    rec.notify = { title: `${st.meta.emoji} ${st.meta.name}`.slice(0, 60), body: String(notify.body).slice(0, 160) }
+  }
   await db.putGroup(rec)
   return flush(gid).catch((e) => {
     if (e.status === 403) throw e
@@ -241,9 +248,13 @@ async function flush(gid) {
   const raw = currentKey(rec)
   const events = []
   for (const ev of rec.outbox) events.push({ keyVersion: rec.keyVersion, data: await encryptEvent(raw, ev) })
-  await api('POST', `/v2/groups/${gid}/events`, { events })
+  // A notification that waited offline is old news; only send it if it is fresh.
+  const fresh0 = rec.notify && Date.now() - Date.parse(rec.outbox[rec.outbox.length - 1].at) < 10 * 60e3
+  const notify = fresh0 ? { keyVersion: rec.keyVersion, data: await encryptEvent(raw, rec.notify) } : undefined
+  await api('POST', `/v2/groups/${gid}/events`, { events, notify })
   const fresh = await db.getGroup(gid)
   fresh.outbox = fresh.outbox.slice(rec.outbox.length)
+  delete fresh.notify
   await db.putGroup(fresh)
   return { sent: events.length }
 }
@@ -265,6 +276,7 @@ export async function refresh(gid) {
   }
   const rec = (await db.getGroup(gid)) || { id: gid, keys: {}, since: 0, events: [], outbox: [], seenSeq: 0 }
   rec.role = info.role
+  rec.muted = !!info.muted
   rec.members = info.members
   for (const k of info.keys) if (!rec.keys[k.version]) rec.keys[k.version] = b64(await unwrap(keys, k.wrapped))
   rec.keyVersion = info.keyVersion
@@ -293,7 +305,8 @@ export async function refresh(gid) {
   const st = stateOf(await db.getGroup(gid))
   const mine = st.profiles.get(keys.memberId)
   if (profile && (!mine || mine.nickname !== profile.nickname || mine.color !== profile.color || mine.accessory !== profile.accessory)) {
-    await post(gid, [{ t: 'member.profile', ...pick(profile) }])
+    // The first introduction also tells the others someone joined.
+    await post(gid, [{ t: 'member.profile', ...pick(profile) }], mine ? null : { body: `🐾 ${profile.nickname} הצטרף/ה לקבוצה` })
   }
   return added
 }
@@ -440,5 +453,29 @@ export async function markSeen(gid) {
 
 /** "חבר אחד" / "3 חברים". */
 export const membersText = (n) => (n === 1 ? 'חבר אחד' : `${n} חברים`)
+
+// ---------- Push ----------
+
+export async function pushKey() {
+  const res = await fetch(`${baseUrl()}/v2/push/key`)
+  if (!res.ok) throw new Error('התראות לא זמינות כרגע')
+  return (await res.json()).key
+}
+export async function savePush(sub) {
+  await register()
+  const j = sub.toJSON()
+  await api('PUT', '/v2/push', { endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth })
+}
+export async function removePush(endpoint) {
+  await api('POST', '/v2/push/off', { endpoint })
+}
+export async function testPush() {
+  await api('POST', '/v2/push/test', {})
+}
+export async function setMute(gid, muted) {
+  await api('POST', `/v2/groups/${gid}/mute`, { muted })
+  const rec = await db.getGroup(gid)
+  if (rec) await db.putGroup({ ...rec, muted })
+}
 
 export const inviteLink = (code) => `${location.origin}${location.pathname}#/join/${code}`

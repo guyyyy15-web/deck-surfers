@@ -2,6 +2,8 @@
 //   node scripts/groups-smoke.cjs        (needs `npm ci` in server/ once)
 const { chromium, devices } = require('playwright')
 const { spawn, execFileSync } = require('child_process')
+const http = require('http')
+const nodeCrypto = require('crypto')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
@@ -26,7 +28,23 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   const env = { ...process.env, CLOUDFLARE_API_TOKEN: 'local', CI: '1' }
   const d1 = (sql) => JSON.parse(execFileSync('npx', ['wrangler', 'd1', 'execute', 'nekamot-sync', '--local', '--persist-to', persist, '--json', '--command', sql], { cwd: SERVER, env, stdio: 'pipe' }).toString())[0].results
   execFileSync('npx', ['wrangler', 'd1', 'migrations', 'apply', 'nekamot-sync', '--local', '--persist-to', persist], { cwd: SERVER, env, stdio: 'pipe' })
-  const api = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(API_PORT), '--persist-to', persist, '--var', 'ALLOW_LOCALHOST:1'], { cwd: SERVER, env, detached: true, stdio: 'ignore' })
+  // Push: test VAPID keys, no cooldown, and a pretend push service that records what the Worker sends.
+  const vk = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
+  const VAPID_PUBLIC = Buffer.from(await crypto.subtle.exportKey('raw', vk.publicKey)).toString('base64url')
+  const VAPID_PRIVATE = JSON.stringify(await crypto.subtle.exportKey('jwk', vk.privateKey))
+  const PUSH_PORT = 8797
+  const pushes = []
+  const pushService = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', (c) => chunks.push(c))
+    req.on('end', () => {
+      pushes.push({ path: req.url, body: Buffer.concat(chunks) })
+      res.writeHead(201)
+      res.end()
+    })
+  }).listen(PUSH_PORT, '127.0.0.1')
+  const api = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(API_PORT), '--persist-to', persist, '--var', 'ALLOW_LOCALHOST:1',
+    '--var', `VAPID_PUBLIC:${VAPID_PUBLIC}`, '--var', `VAPID_PRIVATE_JWK:${VAPID_PRIVATE}`, '--var', 'PUSH_COOLDOWN_MS:0'], { cwd: SERVER, env, detached: true, stdio: 'ignore' })
   const web = spawn(process.execPath, [path.join(__dirname, 'serve.cjs'), String(APP_PORT)], { stdio: 'ignore' })
   for (let i = 0; i < 120; i++) {
     try {
@@ -34,7 +52,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     } catch { /* starting */ }
     await wait(500)
   }
-  const browser = await chromium.launch()
+  // Full headless Chromium: unlike the stripped-down headless shell, it can show notifications.
+  const browser = await chromium.launch({ channel: 'chromium' })
   try {
     const maker = await browser.newPage()
     await maker.setViewportSize({ width: 500, height: 500 })
@@ -45,8 +64,39 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await maker.close()
     const img = (name, buffer) => ({ name, mimeType: 'image/png', buffer })
 
+    // A browser subscription that delivers to the pretend push service; the keys stay here so the test can
+    // decrypt the transport layer (RFC 8291) the way the real push service + browser would.
+    const fakeSub = (name) => {
+      const ecdh = nodeCrypto.createECDH('prime256v1')
+      ecdh.generateKeys()
+      const auth = nodeCrypto.randomBytes(16)
+      return { ecdh, auth, endpoint: `http://127.0.0.1:${PUSH_PORT}/push/${name}`, p256dh: ecdh.getPublicKey().toString('base64url'), authB64: auth.toString('base64url') }
+    }
+    const openPush = async (sub, body) => {
+      const hk = async (salt, ikm, info, len) => new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']), len * 8))
+      const salt = body.subarray(0, 16), asPub = body.subarray(21, 21 + body[20]), ct = body.subarray(21 + body[20])
+      const ikm = await hk(sub.auth, sub.ecdh.computeSecret(asPub), Buffer.concat([Buffer.from('WebPush: info\0'), sub.ecdh.getPublicKey(), asPub]), 32)
+      const key = await crypto.subtle.importKey('raw', await hk(salt, ikm, Buffer.from('Content-Encoding: aes128gcm\0'), 16), 'AES-GCM', false, ['decrypt'])
+      const plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: await hk(salt, ikm, Buffer.from('Content-Encoding: nonce\0'), 12) }, key, ct))
+      return JSON.parse(Buffer.from(plain.subarray(0, -1)).toString())
+    }
+    const pushesTo = (sub) => pushes.filter((x) => sub.endpoint.endsWith(x.path))
+    /** Hands a push to the phone's service worker exactly as the browser would when one arrives. */
+    const deliver = async (p, payload) => {
+      const cdp = await p.ctx.newCDPSession(p.page)
+      const reg = new Promise((resolve) => cdp.on('ServiceWorker.workerRegistrationUpdated', (e) => {
+        const r = e.registrations.find((x) => !x.isDeleted)
+        if (r) resolve(r.registrationId)
+      }))
+      await cdp.send('ServiceWorker.enable')
+      await cdp.send('ServiceWorker.deliverPushMessage', { origin: new URL(APP).origin, registrationId: await reg, data: JSON.stringify(payload) })
+      await wait(800)
+      return p.page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => ({ title: n.title, body: n.body, tag: n.tag })))
+    }
+
     const phone = async (name, device) => {
       const ctx = await browser.newContext({ ...devices[device], locale: 'he-IL' })
+      await ctx.grantPermissions(['notifications'], { origin: new URL(APP).origin })
       await ctx.addInitScript((url) => localStorage.setItem('nk.syncUrl', JSON.stringify(url)), API)
       const page = await ctx.newPage()
       page.errors = []
@@ -124,6 +174,31 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await C.page.waitForURL(/#\/g\//)
     check(true, 'C: joined (keyboard path for the oath)')
 
+    // B (Android) turns on notifications from settings. Headless Chromium has no real push service, so the
+    // subscription is pointed at the pretend one; everything else (permission, server, SW) is real.
+    const subB = fakeSub('b')
+    await B.ctx.addInitScript(({ endpoint, p256dh, auth, key }) => {
+      if (typeof PushManager === 'undefined') return
+      const make = () => ({ endpoint, options: { applicationServerKey: Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/') + '='), (c) => c.charCodeAt(0)).buffer },
+        toJSON: () => ({ endpoint, keys: { p256dh, auth } }), unsubscribe: async () => { localStorage.removeItem('__sub'); return true } })
+      PushManager.prototype.subscribe = async () => (localStorage.setItem('__sub', '1'), make())
+      PushManager.prototype.getSubscription = async () => (localStorage.getItem('__sub') ? make() : null)
+    }, { endpoint: subB.endpoint, p256dh: subB.p256dh, auth: subB.authB64, key: VAPID_PUBLIC })
+    await B.page.goto(`${APP}#/settings`)
+    await B.page.reload() // a new document, so the subscription stub above is installed
+    await B.page.waitForSelector('#splash', { state: 'detached' })
+    await B.page.click('[data-act="push-on"]')
+    await B.page.waitForSelector('.toast:has-text("ההתראות פעילות")')
+    check(await B.page.isVisible('[data-act="push-test"]'), 'B: notifications on (settings show test and off)')
+    check(await A.page.evaluate(() => !document.querySelector('[data-act="push-on"]')), 'A (iPhone in Safari): no push button outside the home-screen app')
+    await B.page.click('[data-act="push-test"]')
+    await B.page.waitForSelector('.toast:has-text("נשלחה")')
+    await wait(800)
+    const testPayload = await openPush(subB, pushesTo(subB).at(-1).body)
+    check(testPayload.test === true, 'server: the test notification went to B')
+    const shownTest = await deliver(B, testPayload)
+    check(shownTest.some((n) => n.body === 'ההתראות עובדות! 🎉'), "B's phone shows the test notification")
+
     // A sees three cats; proposes a revenge with a photo.
     await open(A, `#/g/${gid}/info`)
     await A.page.waitForSelector('.rows .row:has-text("דוקטור סרקזם")')
@@ -137,6 +212,13 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await A.page.click('[type=submit]')
     await A.page.waitForSelector('.g-card:has-text("השכן עם המקדחה")')
     check(true, 'A: proposal on the board')
+    await wait(1200)
+    const note = await openPush(subB, pushesTo(subB).at(-1).body)
+    check(note.g === gid && typeof note.d === 'string' && !JSON.stringify(note).includes('המקדחה'), 'server → B: the notification arrives, and the server only saw ciphertext')
+    const shown = await deliver(B, note)
+    const mine = shown.find((n) => n.tag === gid)
+    check(mine && mine.title === '🔥 השותפים מהדירה' && mine.body.includes('הציע/ה: השכן עם המקדחה'), `B's phone decrypts and shows it: "${mine?.title} · ${mine?.body}"`)
+    check(pushes.length > 0 && pushes.every((x) => x.path === '/push/b'), 'only subscribed phones get pushes (the author, A, has none)')
 
     // B and C see it (with the photo) and vote.
     for (const p of [B, C]) {
@@ -177,6 +259,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await open(A, `#/g/${gid}?tab=chat`)
     await A.page.waitForSelector('.msg:has-text("פופקורן")', { timeout: 15000 })
     check(true, "A: reads C's chat message")
+    // B mutes the group: C's next message does not reach B.
+    await B.page.goto(`${APP}#/g/${gid}/info`)
+    await B.page.click('[data-mute="1"]')
+    await B.page.waitForSelector('.toast:has-text("מושתקת")')
+    const before = pushesTo(subB).length
+    await C.page.fill('#chat-text', 'הודעה בשקט')
+    await C.page.press('#chat-text', 'Enter')
+    await C.page.waitForSelector('.msg.mine:has-text("בשקט")')
+    await wait(1500)
+    check(pushesTo(subB).length === before, 'muted: no push to B')
 
     // A removes C: C is out, the key rotates, and new messages are unreadable to C.
     await A.page.goto(`${APP}#/g/${gid}/info`)
@@ -219,6 +311,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     console.log('\nall good')
   } finally {
     await browser.close()
+    pushService.close()
     try { process.kill(-api.pid) } catch { /* gone */ }
     web.kill()
     fs.rmSync(persist, { recursive: true, force: true })

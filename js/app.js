@@ -10,8 +10,9 @@ import { IDEAS } from './ideas.js'
 import * as sync from './sync.js'
 import * as identity from './identity.js'
 import * as GU from './groups-ui.js'
+import * as push from './push.js'
 
-export const APP_VERSION = '1.4.0'
+export const APP_VERSION = '1.5.0'
 
 const S = {
   list: [],
@@ -997,6 +998,7 @@ function settingsScreen() {
       ${topbar({ title: 'הגדרות', start: backBtn('#/') })}
       ${profileSection()}
       ${syncSection()}
+      ${pushSection()}
       <section class="group"><h2>איך לפנות אליך?</h2><div class="rows">
         <div class="row"><span class="grow">לשון פנייה<small>${g('"שמרי נקמה"', '"שמור נקמה"')}</small></span>${seg('voice', [['f', 'נקבה'], ['m', 'זכר']])}</div></div></section>
       <section class="group"><h2>מראה</h2><div class="rows">
@@ -1146,6 +1148,73 @@ function profileScreen() {
       }
     },
   }
+}
+
+// ---------- Notifications ----------
+
+function pushSection() {
+  const st = push.status()
+  const rows = {
+    'needs-install': `<div class="row">${icon('phone', 24, 'lilac-200')}<span class="grow">באייפון, התראות עובדות רק כשהאפליקציה מותקנת<small>שיתוף ← "הוספה למסך הבית", ואז לפתוח מהאייקון ולהפעיל כאן.</small></span></div>`,
+    unsupported: `<div class="row">${icon('x', 24)}<span class="grow">הדפדפן הזה לא תומך בהתראות</span></div>`,
+    'needs-cat': `<a class="row" href="#/me">${icon('user', 24, 'lilac-200')}<span class="grow">התראות הן על מה שקורה בקבוצות<small>${g('צרי', 'צור')} קודם את החתול שלך.</small></span>${icon('chevron-left', 20)}</a>`,
+    denied: `<div class="row">${icon('lock', 24, 'lilac-200')}<span class="grow">ההתראות חסומות<small>${isIOS() ? 'הגדרות האייפון ← התראות ← נקמות שלי ← לאפשר.' : 'בהגדרות האתר בדפדפן ← התראות ← לאפשר.'}</small></span></div>`,
+    off: `<button type="button" class="row" data-act="push-on">${icon('bolt', 24, 'sun')}<span class="grow"><b>הפעלת התראות</b><small>כשמישהו בקבוצה מציע, לוקח, מבצע או כותב. התוכן מוצפן; רק הטלפון שלך קורא אותו.</small></span></button>`,
+    on: `<div class="row">${icon('check', 24)}<span class="grow"><b>התראות פעילות</b><small>אפשר להשתיק קבוצה מסוימת בהגדרות שלה.</small></span></div>
+      <button type="button" class="row" data-act="push-test">${icon('bolt', 24, 'sun')}<span class="grow">שליחת התראת בדיקה</span></button>
+      <button type="button" class="row" data-act="push-off">${icon('x', 24)}<span class="grow">כיבוי התראות בטלפון הזה</span></button>`,
+  }
+  return `<section class="group"><h2>התראות</h2><div class="rows">${rows[st]}</div></section>`
+}
+
+async function pushAction(act) {
+  if (act === 'push-on') {
+    try {
+      await push.enable()
+      push.markAsked()
+      toast('ההתראות פעילות 🔔')
+    } catch (e) {
+      toast(e.code === 'denied' ? 'ההתראות חסומות. אפשר לאפשר בהגדרות הטלפון.' : e.message || 'לא הצלחתי להפעיל התראות')
+    }
+    render()
+  } else if (act === 'push-off') {
+    await push.disable()
+    toast('ההתראות כבויות בטלפון הזה')
+    render()
+  } else if (act === 'push-test') {
+    try {
+      await (await import('./groups.js')).testPush()
+      toast('נשלחה. היא אמורה להגיע תוך כמה שניות')
+    } catch (e) {
+      toast(e.status === 404 ? 'אין מנוי פעיל. כבו והפעילו שוב.' : e.status === 429 ? 'מספיק בדיקות לשעה הקרובה 🙂' : 'השליחה לא הצליחה')
+    }
+  }
+}
+
+/** After the first thing someone does in a group: offer notifications, once. */
+function maybeAskPush() {
+  if (!push.shouldAsk()) return
+  push.markAsked()
+  setTimeout(async () => {
+    const s = sheet(
+      `<div class="sheet-head"><span style="font-size:44px">🔔</span><h2>לדעת כשקורה משהו?</h2>
+         <p>התראה כשמישהו בקבוצה מציע נקמה, לוקח אחת, מבצע או כותב. בלי ספאם: לכל היותר אחת לחצי דקה מכל קבוצה.</p></div>
+       <div class="actions" style="padding-top:0"><button type="button" class="nk-btn nk-btn-primary" data-yes>${icon('check', 22)}<span>כן, להפעיל</span></button>
+         <button type="button" class="nk-btn nk-btn-quiet" data-no>אולי אחר כך</button></div>`,
+      { label: 'התראות' },
+    )
+    s.el.querySelector('[data-no]').onclick = () => s.close()
+    s.el.querySelector('[data-yes]').onclick = async () => {
+      // Permission must be requested inside this tap; close the sheet afterwards.
+      try {
+        await push.enable()
+        toast('ההתראות פעילות 🔔')
+      } catch (e) {
+        toast(e.code === 'denied' ? 'בלי הרשאה, בסדר גמור. אפשר להפעיל בהגדרות.' : e.message || 'לא הצלחתי להפעיל')
+      }
+      await s.close()
+    }
+  }, 900)
 }
 
 // ---------- Cloud backup and sync ----------
@@ -1416,6 +1485,8 @@ app.addEventListener('click', async (e) => {
     render()
   } else if (act === 'feedback') {
     feedbackSheet()
+  } else if (act.startsWith('push-')) {
+    pushAction(act)
   } else if (act.startsWith('sync-')) {
     syncAction(act)
   } else if (act === 'export') {
@@ -1489,6 +1560,7 @@ function render() {
   app.innerHTML = `<main class="screen${scr.nav ? ' has-nav' : ''}${changed ? ' enter' : ''}">${scr.html}</main>${scr.nav ? nav(scr.nav) : ''}`
   scr.mount?.(app)
   hydrate(app)
+  push.setBadge(GU.unreadTotal())
   if (changed) window.scrollTo(0, 0)
   const h1 = app.querySelector('h1')
   document.title = h1 && h1.textContent !== 'נקמות שלי' ? `${h1.textContent} · נקמות שלי` : 'נקמות שלי'
@@ -1513,7 +1585,8 @@ async function getPhotoBlob(id) {
 /** What groups-ui.js needs from here. */
 function groupsCtx() {
   return { icon, cat, esc, g, topbar, backBtn, sheet, confirmSheet, toast, confetti, buzz, hydrate, cropFace, go, S, typeOf, TYPES,
-    dayMonth, ago, copy, field, docPicker, initialOf, colorFor, meBadge, softRender, route, getPhotoBlob }
+    dayMonth, ago, copy, field, docPicker, initialOf, colorFor, meBadge, softRender, route, getPhotoBlob,
+    maybeAskPush, pushOn: () => push.status() === 'on' }
 }
 
 // ---------- Theme ----------
@@ -1560,7 +1633,18 @@ async function start() {
     setTimeout(() => splash?.remove(), 400)
   }, wait)
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    const hadController = !!navigator.serviceWorker.controller
     navigator.serviceWorker.register('./sw.js').catch(() => undefined)
+    // Tapping a notification while the app is open: go to that group.
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (typeof e.data?.nav === 'string' && e.data.nav.startsWith('#/')) location.hash = e.data.nav
+    })
+    // A new version took over (existing users): offer a refresh instead of waiting for the next launch.
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return
+      toast('גרסה חדשה מוכנה ✨', { label: 'רענון', run: () => location.reload() })
+    })
+    push.refresh().catch(() => undefined)
   }
 }
 start()

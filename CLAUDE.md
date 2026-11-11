@@ -38,6 +38,10 @@ docs/         README screenshots, feature specs      game/        Deck Surfers (
   Apply with `npm run deploy:server` (runs `wrangler d1 migrations apply --remote`, then deploys).
 - **Groups:** never trust event content for permissions; `fold()` checks the author (set by the server from
   the signature) and current roles. Tests must never call the production server (stub or local Worker).
+- **Push:** the notification text is encrypted with the group key on the phone and decrypted in `sw.js`;
+  the Worker only relays it (`server/src/webpush.js`). VAPID private key = Wrangler secret `VAPID_PRIVATE_JWK`
+  (never in git or chat). Keep the economy rules: no push for votes/profiles, 30 s cooldown per member per
+  group, ≤ 30 sends per post, ≤ 3 devices per member. `sw.js` must always show a notification on push (iOS).
 - **Privacy:** the server must never receive plaintext user content. Everything user-written is encrypted
   in `js/sync.js` before upload. Never log request bodies in the Worker.
 - **Cost guard:** keep the Worker limits (photo 3 MB, 300 MB per space, 8 GB total, 10 new spaces per
@@ -54,7 +58,7 @@ npm test               # unit tests (fast; run before every commit)
 npm run test:server    # Worker API tests against wrangler dev (needs: cd server && npm ci)
 npm run smoke          # iPhone browser test, screenshots in screenshots/
 npm run smoke:sync     # 2–4 phones syncing through the local Worker
-npm run smoke:groups   # 3 phones in a group through the local Worker
+npm run smoke:groups   # 3 phones in a group through the local Worker, incl. push end to end (full headless Chromium)
 npm run test:all       # everything
 npm run deploy:server  # migrations + deploy the Worker (needs CLOUDFLARE_* env, see below)
 ```

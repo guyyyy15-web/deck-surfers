@@ -20,6 +20,8 @@ async function reload() {
 }
 
 const myId = () => identity.load()?.keys?.memberId
+const nick = () => identity.profile()?.nickname || 'מישהו'
+const clip = (t, n = 80) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
 const hasCat = () => !!identity.profile()
 
 export function unreadTotal() {
@@ -312,7 +314,8 @@ function boardScreen(rec, tab) {
           const text = input.value.trim()
           if (!text) return
           input.value = ''
-          await act(() => G.post(rec.id, [{ t: 'comment.put', cid: G.newId('c'), id: G.CHAT, text }]))
+          await act(() => G.post(rec.id, [{ t: 'comment.put', cid: G.newId('c'), id: G.CHAT, text }], { body: `💬 ${nick()}: ${clip(text)}` }))
+          ctx.maybeAskPush()
           document.querySelector('#chat-text')?.focus()
         }
       }
@@ -361,11 +364,11 @@ function revengeScreen(rec, rid) {
           <button type="submit" class="icon-btn raised" aria-label="שליחה">${ctx.icon('arrow-right', 22)}</button></form></div></section>`,
     mount(root) {
       ensurePhotos(rec.id, [r.photoId, r.docPhotoId])
-      const post = (evs, ok) => act(() => G.post(rec.id, evs), ok)
+      const post = (evs, ok, notify) => act(() => G.post(rec.id, evs, notify), ok)
       root.querySelector('[data-vote]').onclick = () => post([{ t: 'vote.set', id: r.id, on: !r.votes.has(me) }])
       root.querySelector('[data-take]')?.addEventListener('click', () => {
         ctx.buzz(30)
-        post([{ t: 'assign.set', id: r.id, to: me }], 'שלך! 😈')
+        post([{ t: 'assign.set', id: r.id, to: me }], 'שלך! 😈', { body: `😈 ${nick()} לקח/ה את "${clip(r.name, 40)}"` }).then(() => ctx.maybeAskPush())
       })
       root.querySelector('[data-untake]')?.addEventListener('click', () => post([{ t: 'assign.set', id: r.id, to: null }], 'שוחרר'))
       root.querySelector('[data-reopen]')?.addEventListener('click', () => post([{ t: 'revenge.reopen', id: r.id }], 'חזרה לפתוחות'))
@@ -383,7 +386,8 @@ function revengeScreen(rec, rid) {
         const text = input.value.trim()
         if (!text) return
         input.value = ''
-        await post([{ t: 'comment.put', cid: G.newId('c'), id: r.id, text }])
+        await post([{ t: 'comment.put', cid: G.newId('c'), id: r.id, text }], undefined, { body: `💬 ${nick()} על "${clip(r.name, 30)}": ${clip(text, 60)}` })
+        ctx.maybeAskPush()
       }
     },
   }
@@ -404,7 +408,7 @@ function doneSheet(gid, r) {
     e.currentTarget.disabled = true
     try {
       const docPhotoId = state.docBlob ? await G.uploadPhoto(gid, state.docBlob) : null
-      await act(() => G.post(gid, [{ t: 'revenge.done', id: r.id, notes: s.el.querySelector('#gd-notes').value.trim(), docPhotoId }]))
+      await act(() => G.post(gid, [{ t: 'revenge.done', id: r.id, notes: s.el.querySelector('#gd-notes').value.trim(), docPhotoId }], { body: `🎉 ${nick()} ביצע/ה: ${clip(r.name, 60)}` }))
       await s.close()
       ctx.confetti()
       ctx.buzz(40)
@@ -485,7 +489,8 @@ function formScreen(rec, rid) {
         try {
           const photoId = d.faceBlob ? await G.uploadPhoto(rec.id, d.faceBlob) : d.photoId
           const id = ex?.id || G.newId('r')
-          await act(() => G.post(rec.id, [{ t: 'revenge.put', id, name: d.name.trim(), why: d.why.trim(), type: d.type, plan: d.plan.trim(), photoId }]), ex ? 'נשמר' : 'ההצעה נשלחה לקבוצה 😈')
+          await act(() => G.post(rec.id, [{ t: 'revenge.put', id, name: d.name.trim(), why: d.why.trim(), type: d.type, plan: d.plan.trim(), photoId }], ex ? null : { body: `💡 ${nick()} הציע/ה: ${clip(d.name.trim(), 60)}` }), ex ? 'נשמר' : 'ההצעה נשלחה לקבוצה 😈')
+          if (!ex) ctx.maybeAskPush()
           ctx.S.gdraft = null
           ctx.go(ex ? `#/g/${rec.id}/r/${id}` : `#/g/${rec.id}`, true)
         } catch {
@@ -511,6 +516,8 @@ function infoScreen(rec) {
       ${admin ? `<section class="group"><h2>שם ואימוג׳י</h2><div class="rows" style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">
         <div class="nk-input" style="min-height:48px"><input id="gi-name" maxlength="30" value="${ctx.esc(st.meta.name)}" aria-label="שם הקבוצה"></div>
         ${emojiPicker(emoji)}<button type="button" class="small-btn primary" data-rename style="align-self:flex-start">שמירה</button></div></section>` : ''}
+      <section class="group"><h2>התראות</h2><div class="rows"><div class="row"><span class="grow">התראות מהקבוצה הזו<small>${ctx.pushOn() ? 'כשמישהו מציע, לוקח, מבצע או כותב.' : 'קודם צריך להפעיל התראות בהגדרות.'}</small></span>
+        <div class="seg" role="group"><button type="button" data-mute="0" class="${rec.muted ? '' : 'is-on'}" aria-pressed="${!rec.muted}">פעילות</button><button type="button" data-mute="1" class="${rec.muted ? 'is-on' : ''}" aria-pressed="${!!rec.muted}">מושתקות</button></div></div></div></section>
       <section class="group"><h2>חברים</h2><div class="rows">${(rec.members || []).map((m) => `<div class="row">${mini(st, m.id, 40)}
         <span class="grow"><b>${ctx.esc(prof(st, m.id).nickname)}</b>${youMark(m.id)}<small>${m.role === 'admin' ? 'מנהל/ת' : 'חבר/ה'}</small></span>
         ${admin && m.id !== me ? `${m.role !== 'admin' ? `<button type="button" class="small-btn" data-admin="${m.id}">למנהל/ת</button>` : ''}<button type="button" class="icon-btn" data-remove="${m.id}" aria-label="הוצאה מהקבוצה">${ctx.icon('x', 20)}</button>` : ''}</div>`).join('')}</div></section>
@@ -526,6 +533,9 @@ function infoScreen(rec) {
           const name = root.querySelector('#gi-name').value.trim()
           if (name) act(() => G.post(rec.id, [{ t: 'group.meta', name, emoji }]), 'נשמר')
         }
+      }
+      for (const b of root.querySelectorAll('[data-mute]')) {
+        b.onclick = () => act(() => G.setMute(rec.id, b.dataset.mute === '1'), b.dataset.mute === '1' ? 'הקבוצה מושתקת 🔕' : 'ההתראות פעילות 🔔')
       }
       for (const b of root.querySelectorAll('[data-admin]')) b.onclick = () => act(() => G.makeAdmin(rec.id, b.dataset.admin), 'עכשיו גם מנהל/ת')
       for (const b of root.querySelectorAll('[data-remove]')) {
@@ -646,7 +656,7 @@ export async function moveSheet(r, onMoved) {
         const blob = r.photoId ? (await ctx.getPhotoBlob(r.photoId)) : null
         const photoId = blob ? await G.uploadPhoto(gid, blob) : null
         // Offline, the event waits in the group's outbox and goes out later, so this still counts as moved.
-        await G.post(gid, [{ t: 'revenge.put', id: G.newId('r'), name: r.name, why: r.why, type: r.type, plan: r.plan || '', photoId }])
+        await G.post(gid, [{ t: 'revenge.put', id: G.newId('r'), name: r.name, why: r.why, type: r.type, plan: r.plan || '', photoId }], { body: `💡 ${nick()} הציע/ה: ${clip(r.name, 60)}` })
         await s.close()
         await onMoved()
         await reload()

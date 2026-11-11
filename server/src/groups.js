@@ -175,6 +175,16 @@ export async function groupsRoute(req, env, url, ctx) {
       .run()
     return json({ ok: true })
   }
+  // "Send me a test notification" (to check a phone; a few per hour).
+  if (p === '/v2/push/test' && m === 'POST') {
+    await limit(env, req, 'pushtest', 6)
+    if (!env.VAPID_PUBLIC || !env.VAPID_PRIVATE_JWK) fail(503, 'push not configured')
+    const { results } = await env.DB.prepare('SELECT endpoint, p256dh, auth FROM push_subs WHERE member_id = ?').bind(me).all()
+    if (!results.length) fail(404, 'no subscription')
+    const vapid = { publicKey: env.VAPID_PUBLIC, privateJwk: JSON.parse(env.VAPID_PRIVATE_JWK), subject: env.VAPID_SUBJECT || 'https://guyyyy15-web.github.io/deck-surfers/' }
+    const statuses = await Promise.all(results.map((s) => sendPush(s, JSON.stringify({ test: true }), { vapid, ttl: 600 }).catch(() => 0)))
+    return json({ ok: statuses.some((x) => x >= 200 && x < 300), sent: statuses.filter((x) => x >= 200 && x < 300).length })
+  }
   if (p === '/v2/push/off' && m === 'POST') {
     const body = parse(bytes, 4096)
     await env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ? AND member_id = ?').bind(String(body.endpoint || ''), me).run()
@@ -387,7 +397,7 @@ async function notifyMembers(env, gid, author, payload) {
        AND s.member_id NOT IN (SELECT member_id FROM push_sent WHERE group_id = ? AND at > ?)
      LIMIT ?`,
   )
-    .bind(gid, author, gid, gid, now - G.pushCooldownMs, G.pushPerPost)
+    .bind(gid, author, gid, gid, now - (Number(env.PUSH_COOLDOWN_MS) || G.pushCooldownMs), G.pushPerPost)
     .all()
   if (!results.length) return
   const vapid = { publicKey: env.VAPID_PUBLIC, privateJwk: JSON.parse(env.VAPID_PRIVATE_JWK), subject: env.VAPID_SUBJECT || 'https://guyyyy15-web.github.io/deck-surfers/' }
