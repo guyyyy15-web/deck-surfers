@@ -24,3 +24,28 @@ migrations_dir = "migrations"
 [[r2_buckets]]
 binding = "PHOTOS"
 bucket_name = "nekamot-photos"
+
+# ---- החצר (hechatzer.pages.dev): same code, its own Worker, database and photos. ----
+# Deploy: npx wrangler d1 migrations apply chatzer --remote --env chatzer && npx wrangler deploy --env chatzer
+[env.chatzer]
+name = "chatzer-sync"
+workers_dev = true
+
+[env.chatzer.observability]
+enabled = true
+
+[env.chatzer.vars]
+ALLOWED_ORIGINS = "https://hechatzer.pages.dev"
+ALLOW_LOCALHOST = "0"
+VAPID_PUBLIC = "BKHgn2VUUglExb_yw8B83jzk6mjIqM-K4h9uMZO4p0UzRGMMgVQtEhWstdsbqUp50chGIzZfDcRTkpD59ciS5g4"
+VAPID_SUBJECT = "https://hechatzer.pages.dev/"
+
+[[env.chatzer.d1_databases]]
+binding = "DB"
+database_name = "chatzer"
+database_id = "0a0f12ad-da85-4499-8152-6d18874e9ce9"
+migrations_dir = "migrations"
+
+[[env.chatzer.r2_buckets]]
+binding = "PHOTOS"
+bucket_name = "chatzer-photos"

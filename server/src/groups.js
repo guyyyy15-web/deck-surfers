@@ -280,7 +280,9 @@ export async function groupsRoute(req, env, url, ctx) {
     // Optional notification (encrypted on the phone with the group key). Older app versions send none.
     const n = body.notify
     if (n && typeof n.data === 'string' && n.data.length <= G.notifyBytes && Number.isInteger(n.keyVersion)) {
-      const work = notifyMembers(env, gid, me, { g: gid, v: n.keyVersion, d: n.data, s: seq })
+      // `to`: only these members (e.g. "your turn"); the server sees who, never what.
+      const to = Array.isArray(n.to) ? n.to.filter((x) => typeof x === 'string' && /^[0-9a-f]{24}$/.test(x)).slice(0, G.maxMembers) : null
+      const work = notifyMembers(env, gid, me, { g: gid, v: n.keyVersion, d: n.data, s: seq }, to)
       if (ctx?.waitUntil) ctx.waitUntil(work.catch((e) => console.error(`push ${gid}: ${e}`)))
       else await work.catch(() => undefined)
     }
@@ -386,8 +388,9 @@ export async function groupsRoute(req, env, url, ctx) {
 }
 
 /** Pushes one notification to every other member's phones (not muted, not pushed in the last cooldown). */
-async function notifyMembers(env, gid, author, payload) {
+async function notifyMembers(env, gid, author, payload, to = null) {
   if (!env.VAPID_PUBLIC || !env.VAPID_PRIVATE_JWK) return
+  if (to && !to.length) return
   const now = Date.now()
   const { results } = await env.DB.prepare(
     `SELECT s.endpoint, s.member_id, s.p256dh, s.auth FROM push_subs s
@@ -395,9 +398,10 @@ async function notifyMembers(env, gid, author, payload) {
      WHERE s.member_id != ?
        AND s.member_id NOT IN (SELECT member_id FROM push_mutes WHERE group_id = ?)
        AND s.member_id NOT IN (SELECT member_id FROM push_sent WHERE group_id = ? AND at > ?)
+       AND (? IS NULL OR s.member_id IN (SELECT value FROM json_each(?)))
      LIMIT ?`,
   )
-    .bind(gid, author, gid, gid, now - (Number(env.PUSH_COOLDOWN_MS) || G.pushCooldownMs), G.pushPerPost)
+    .bind(gid, author, gid, gid, now - (Number(env.PUSH_COOLDOWN_MS) || G.pushCooldownMs), to && JSON.stringify(to), to && JSON.stringify(to), G.pushPerPost)
     .all()
   if (!results.length) return
   const vapid = { publicKey: env.VAPID_PUBLIC, privateJwk: JSON.parse(env.VAPID_PRIVATE_JWK), subject: env.VAPID_SUBJECT || 'https://guyyyy15-web.github.io/deck-surfers/' }
