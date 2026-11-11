@@ -1,6 +1,6 @@
 // Offline: every file the app needs is cached on install. Bump VERSION whenever a file changes
 // (tests/files.test.mjs checks that every app file is listed here).
-const VERSION = 'nekamot-v1.5.0'
+const VERSION = 'nekamot-v1.5.1'
 // Every app on guyyyy15-web.github.io shares one origin, so cache names carry this app's path.
 const SCOPE = new URL(self.registration.scope).pathname
 const CACHE = `nekamot:${SCOPE}:${VERSION}`
@@ -32,7 +32,9 @@ const FILES = [
 ]
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()))
+  // cache: 'reload' skips the browser's HTTP cache (GitHub Pages allows 10 minutes), so a new version never
+  // installs with files left over from the previous one.
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()))
 })
 
 self.addEventListener('activate', (e) => {

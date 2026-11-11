@@ -32,6 +32,8 @@ docs/         README screenshots, feature specs      game/        Deck Surfers (
 
 - **Releasing an app change:** bump `APP_VERSION` in `js/app.js` **and** `VERSION` in `sw.js` together
   (a test checks). New app files must be added to `FILES` in `sw.js` (a test checks).
+  Before publishing, run `npm run smoke:upgrade`: a phone on the live version (origin/main) must update to
+  the new one, keep its data, and announce the following update.
 - **Inline script in `index.html` changed?** Update its `sha256-…` in the CSP meta tag (a test prints the
   right value). Never add `'unsafe-inline'` to `script-src`.
 - **Database changes** go in a new `server/migrations/NNNN_name.sql`, never by editing an applied one.
@@ -58,6 +60,7 @@ npm test               # unit tests (fast; run before every commit)
 npm run test:server    # Worker API tests against wrangler dev (needs: cd server && npm ci)
 npm run smoke          # iPhone browser test, screenshots in screenshots/
 npm run smoke:sync     # 2–4 phones syncing through the local Worker
+npm run smoke:upgrade  # existing users: live version → working copy, data kept, update toast
 npm run smoke:groups   # 3 phones in a group through the local Worker, incl. push end to end (full headless Chromium)
 npm run test:all       # everything
 npm run deploy:server  # migrations + deploy the Worker (needs CLOUDFLARE_* env, see below)

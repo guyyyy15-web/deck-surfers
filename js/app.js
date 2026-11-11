@@ -12,7 +12,7 @@ import * as identity from './identity.js'
 import * as GU from './groups-ui.js'
 import * as push from './push.js'
 
-export const APP_VERSION = '1.5.0'
+export const APP_VERSION = '1.5.1'
 
 const S = {
   list: [],

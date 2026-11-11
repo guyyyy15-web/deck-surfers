@@ -45,3 +45,7 @@ test('the Content Security Policy allows the inline theme script (update the has
   assert.ok(csp.includes("connect-src 'self' https://nekamot-sync.guyyyy15-web.workers.dev"))
   assert.ok(!/script-src[^;]*unsafe-inline/.test(csp), 'no unsafe-inline scripts')
 })
+
+test('a new version installs its files from the server, not from the HTTP cache', () => {
+  assert.match(sw, /addAll\(FILES\.map\(\(f\) => new Request\(f, \{ cache: 'reload' \}\)\)\)/)
+})
