@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fold, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite } from '../chatzer/js/yard.js'
+import { fold, openReports, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite } from '../chatzer/js/yard.js'
 
 const A = 'a'.repeat(24)
 const B = 'b'.repeat(24)
@@ -162,4 +162,22 @@ test('save codes are read forgivingly: case, spaces, O/0 and I/L/1', async () =>
   assert.equal(normalizeCode('7kq2 m9xd-4tra wp1c'), '7KQ2M9XD4TRAWP1C')
   assert.equal(normalizeCode('OOOO-IIII-LLLL-0000'), '0000111111110000')
   assert.equal(formatCode('7KQ2M9XD4TRAWP1C'), '7KQ2-M9XD-4TRA-WP1C')
+})
+
+test('reports reach the admin; deleting the message or hiding the photo settles them; only admins hide photos', () => {
+  const evs = [
+    e(B, { t: 'comment.put', cid: 'm1', text: 'משהו לא נעים' }),
+    e(C, { t: 'report.put', rid: 'r1', cid: 'm1', reason: 'לא נעים' }),
+    e(C, { t: 'report.put', rid: 'r2', cid: 'm1' }),
+    e(A, { t: 'report.put', rid: 'r3', photoId: 'p9' }),
+    e(C, { t: 'photo.hide', photoId: 'p9' }),
+  ]
+  let s = fold(evs, roles)
+  assert.deepEqual(openReports(s).map((r) => [r.key, r.count]), [['m1', 1], ['p9', 1]], 'a second report by the same person counts once')
+  assert.equal(s.hidden.size, 0, 'a member cannot hide a photo')
+  s = fold([...evs, e(A, { t: 'comment.delete', cid: 'm1' }), e(A, { t: 'photo.hide', photoId: 'p9' })], roles)
+  assert.equal(openReports(s).length, 0)
+  assert.ok(s.hidden.has('p9'))
+  s = fold([...evs, e(B, { t: 'report.close', rid: 'r1' })], roles)
+  assert.equal(openReports(s).length, 2, 'only an admin dismisses a report')
 })

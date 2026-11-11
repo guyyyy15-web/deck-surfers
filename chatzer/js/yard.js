@@ -97,6 +97,7 @@ export function fold(events, roles = new Map()) {
   const s = {
     meta: { name: 'חצר', emoji: '🏡', kind: 'event', when: null, where: '' },
     profiles: new Map(), items: new Map(), chores: new Map(), polls: new Map(), chat: [], lastSeq: 0,
+    reports: [], hidden: new Set(),
   }
   const first = events[0]?.seq
   for (const { seq, author, at, ev } of events) {
@@ -218,9 +219,44 @@ export function fold(events, roles = new Map()) {
         if (i >= 0 && (s.chat[i].author === author || isAdmin(author))) s.chat.splice(i, 1)
         break
       }
+
+      // Reports go to whoever runs the yard. One open report per reporter per thing; an admin closes it by
+      // removing the thing (comment.delete / photo.hide) or by dismissing it (report.close).
+      case 'report.put': {
+        const what = ev.cid ? { cid: String(ev.cid) } : ev.photoId ? { photoId: String(ev.photoId) } : null
+        if (!what || !ev.rid) break
+        const key = what.cid || what.photoId
+        if (s.reports.some((r) => r.key === key && r.by === author && r.open)) break
+        s.reports.push({ rid: String(ev.rid), ...what, key, by: author, at, reason: str(ev.reason, 200), open: true })
+        break
+      }
+      case 'report.close': {
+        if (!isAdmin(author)) break
+        for (const r of s.reports) if (r.rid === ev.rid || (ev.key && r.key === ev.key)) r.open = false
+        break
+      }
+      case 'photo.hide':
+        if (isAdmin(author) && typeof ev.photoId === 'string') s.hidden.add(ev.photoId)
+        break
     }
   }
+  // A report about something that is gone is settled.
+  const live = new Set([...s.chat.map((c) => c.cid)])
+  for (const r of s.reports) if ((r.cid && !live.has(r.cid)) || (r.photoId && s.hidden.has(r.photoId))) r.open = false
   return s
+}
+
+/** Open reports, one entry per reported thing (with how many reported it). */
+export function openReports(s) {
+  const by = new Map()
+  for (const r of s.reports) {
+    if (!r.open) continue
+    const cur = by.get(r.key) || { ...r, count: 0, reasons: [] }
+    cur.count++
+    if (r.reason) cur.reasons.push(r.reason)
+    by.set(r.key, cur)
+  }
+  return [...by.values()]
 }
 
 /** The next one in the turn order after `cur`, skipping people who left the yard. */

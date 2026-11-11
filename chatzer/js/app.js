@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, ACCESSORIES } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.2.3'
+export const APP_VERSION = '0.3.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -278,16 +278,21 @@ function welcome() {
     <p class="lead">מנגל, ארוחת שישי, יום הולדת או מטלות הבית: כולם רואים מה חסר, לוקחים בלחיצה, ואף אחד לא שוכח.</p>
     ${demoParade()}
     <form class="panel" id="f" novalidate>${duckForm({}, { compact: true })}<p class="err" id="err" role="alert"></p>
-      <button class="btn btn-primary btn-wide" type="submit">יאללה, לחצר! 🦆</button></form>
+<label class="choice" style="margin-top:12px;width:100%;justify-content:flex-start;gap:10px;padding:10px 14px;border-radius:16px;min-height:52px">
+        <input type="checkbox" id="age" style="width:22px;height:22px;flex:none;accent-color:var(--green)">
+        <span style="font-size:14px;line-height:20px">${g('אני בת 13 ומעלה ומסכימה', 'אני בן 13 ומעלה ומסכים')} ל<button type="button" class="link-btn" data-privacy style="min-height:auto;padding:0;font-size:14px">מדיניות הפרטיות</button></span></label>
+      <button class="btn btn-primary btn-wide" type="submit" style="margin-top:12px">יאללה, לחצר! 🦆</button></form>
     <button type="button" class="link-btn" id="signin" style="font-weight:700">כבר יש לי ברווזון</button>
     <button type="button" class="link-btn" id="paste">יש לי קישור הזמנה</button>
     <p class="fine">בלי הרשמה, בלי מספר טלפון. הכל מוצפן בטלפון שלך.</p>
   </main>`
   const read = bindDuckForm($app)
+  bindPrivacyLinks($app)
   $app.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault()
     const v = read()
     if (!identity.validName(v.nickname)) return ($app.querySelector('#err').textContent = 'שם באורך 2–20 תווים, בבקשה')
+    if (!agreed()) return ($app.querySelector('#err').textContent = 'צריך לאשר גיל 13 ומעלה ואת מדיניות הפרטיות')
     await act(async () => {
       await identity.saveProfile(v)
       db.persist()
@@ -426,6 +431,40 @@ function codeSheet(code, after) {
       await closeSheet()
       after?.()
     }
+  })
+}
+
+// ---------- Age and privacy ----------
+
+/** The age/privacy box on the form: checked now, remembered for later. */
+function agreed() {
+  const box = $app.querySelector('#age')
+  if (!box?.checked) return false
+  settings = { ...settings, agreedAt: new Date().toISOString() }
+  db.saveSettings(settings)
+  return true
+}
+function bindPrivacyLinks(root) {
+  root.querySelectorAll('[data-privacy]').forEach((b) => (b.onclick = (e) => {
+    e.preventDefault()
+    privacySheet()
+  }))
+}
+
+function privacySheet() {
+  openSheet(`<h2>פרטיות בחצר</h2>
+    <p class="lead">בקצרה: אין חשבון, אין מספר טלפון ואין מייל, והשרת לא יכול לקרוא מה כותבים בחצר.</p>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:14px;font-size:15px;line-height:22px">
+      <p style="margin:0"><b>מה מוצפן בטלפון שלך לפני שהוא יוצא ממנו:</b> השמות, הרשימות, המטלות, ההצבעות, ההודעות, התמונות וטקסט ההתראות. רק מי שבחצר יכול לפתוח אותם.</p>
+      <p style="margin:0"><b>מה השרת רואה:</b> מזהה אקראי לכל ברווזון (לא שם), לאילו חצרות הוא שייך, מתי נשלח משהו ובאיזה גודל, ואם הפעלת התראות, את הכתובת הטכנית לשליחה אליהן. הגנה מעומס שומרת מונה שעתי לפי תמצית מוצפנת של כתובת הרשת, שמתחלפת כל יום.</p>
+      <p style="margin:0"><b>מה אין:</b> פרסומות, מעקב, אנליטיקס, מכירת מידע, או חיפוש אנשים. נכנסים לחצר רק עם קישור.</p>
+      <p style="margin:0"><b>שמירת הברווזון</b> (רשות): נשמר עותק מוצפן, שרק ה־Face ID או קוד השמירה שלך פותחים.</p>
+      <p style="margin:0"><b>מחיקה:</b> עוזבים חצר מהתפריט שלה; מי שמנהלת חצר יכולה למחוק אותה לכולם, וזה מוחק גם את התמונות. שמירות מוסרים במסך "הברווזון שלי".</p>
+      <p style="margin:0"><b>גיל:</b> מגיל 13. החצר היא פרויקט בבטא, לחברים. אם משהו לא נעים, מדווחים לאמא ברווזה מההודעה או מהתמונה.</p>
+      <p style="margin:0"><b>שרתים:</b> Cloudflare, באירופה.</p>
+    </div>
+    <div class="stack"><button class="btn btn-soft" id="ok" type="button">הבנתי</button></div>`, (root) => {
+    root.querySelector('#ok').onclick = closeSheet
   })
 }
 
@@ -615,18 +654,22 @@ async function joinScreen(code) {
     <p class="lead">${lead}</p>
     ${parade(ducks)}
     <form class="panel" id="f" novalidate>
-      ${p ? `<div class="member">${duck(p, 48)}<span class="n">${g('תיכנסי', 'תיכנס')} בתור <b>${esc(p.nickname)}</b></span><a class="link-btn" href="#/me">שינוי</a></div>` : `${duckForm({}, { compact: true })}<button class="link-btn" type="button" id="signin" style="margin-top:6px">כבר יש לי ברווזון? כניסה</button>`}
+      ${p ? `<div class="member">${duck(p, 48)}<span class="n">${g('תיכנסי', 'תיכנס')} בתור <b>${esc(p.nickname)}</b></span><a class="link-btn" href="#/me">שינוי</a></div>` : `${duckForm({}, { compact: true })}<label class="choice" style="margin-top:12px;width:100%;justify-content:flex-start;gap:10px;padding:10px 14px;border-radius:16px;min-height:52px">
+        <input type="checkbox" id="age" style="width:22px;height:22px;flex:none;accent-color:var(--green)">
+        <span style="font-size:14px;line-height:20px">${g('אני בת 13 ומעלה ומסכימה', 'אני בן 13 ומעלה ומסכים')} ל<button type="button" class="link-btn" data-privacy style="min-height:auto;padding:0;font-size:14px">מדיניות הפרטיות</button></span></label><button class="link-btn" type="button" id="signin" style="margin-top:6px">כבר יש לי ברווזון? כניסה</button>`}
       ${peek.full ? '<p class="err">החצר מלאה (20 ברווזונים). אי אפשר להצטרף כרגע.</p>' : '<p class="err" id="err" role="alert"></p>'}
       <button class="btn btn-primary btn-wide" type="submit" ${peek.full ? 'disabled' : ''}>אני בחצר! 🦆</button>
     </form>
     <p class="fine">בלי הרשמה ובלי להתקין. אפשר להוסיף למסך הבית אחר כך, בשביל התראות.</p>`)
   const read = p ? null : bindDuckForm($app)
+  bindPrivacyLinks($app)
   $app.querySelector('#signin')?.addEventListener('click', () => signInSheet(() => joinScreen(code)))
   $app.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault()
     if (read) {
       const v = read()
       if (!identity.validName(v.nickname)) return ($app.querySelector('#err').textContent = 'שם באורך 2–20 תווים, בבקשה')
+      if (!agreed()) return ($app.querySelector('#err').textContent = 'צריך לאשר גיל 13 ומעלה ואת מדיניות הפרטיות')
       await identity.saveProfile(v)
       db.persist()
     }
@@ -668,6 +711,7 @@ async function yardScreen(id) {
       <h1>${esc(st.meta.name)} ${esc(st.meta.emoji)}${sub ? `<span class="sub">${sub}</span>` : ''}</h1>
       <button class="icon-btn" id="menu" type="button" aria-label="אפשרויות החצר">${ICON.dots}</button>
     </header>
+    ${isAdmin && Y.openReports(st).length ? `<div class="nudge" style="background:var(--tile-orange)"><span style="flex:1">🚩 ${count(Y.openReports(st).length, 'דיווח פתוח', 'דיווחים פתוחים')} בחצר</span><button class="pill soft" id="reports" type="button">לטפל</button></div>` : ''}
     ${body}
     ${polls}
     <div class="actions-bar">
@@ -740,7 +784,7 @@ function homeYardBody(rec, st, roles, myId) {
     } else s = `<span class="s">${esc(who(st, rec, it.claimedBy).name)} על זה</span>`
     return `<li class="row${it.claimedBy === myId ? ' mine' : ''}"><button class="what" type="button" data-item="${it.id}"><span class="t">${esc(it.name)}</span>${s}</button>${side}</li>`
   }
-  const doneRow = (it) => `<li class="row done"><button class="what" type="button" data-item="${it.id}"><span class="t">${esc(it.name)}</span><span class="s ok">${esc(who(st, rec, it.doneBy).name)} · בוצע ${relDay(it.doneAt)} ✓</span></button>${it.photoId ? `<img class="thumb" alt="תמונת הוכחה" data-photo="${it.photoId}">` : ''}</li>`
+  const doneRow = (it) => `<li class="row done"><button class="what" type="button" data-item="${it.id}"><span class="t">${esc(it.name)}</span><span class="s ok">${esc(who(st, rec, it.doneBy).name)} · בוצע ${relDay(it.doneAt)} ✓</span></button>${it.photoId && !st.hidden.has(it.photoId) ? `<img class="thumb" alt="תמונת הוכחה" data-photo="${it.photoId}">` : ''}</li>`
   const wd = h.weekDuck
   return `${turnCards}
     <h2 class="section">מטלות בתורות</h2>
@@ -782,6 +826,7 @@ function bindYard(rec, st, roles, myId) {
   const id = rec.id
   const $ = (s) => $app.querySelector(s)
   $('#menu').onclick = () => yardMenu(id)
+  $('#reports')?.addEventListener('click', () => reportsSheet(id))
   $('#invite').onclick = () => inviteSheet(id)
   $('#poll').onclick = () => pollSheet(id)
   $('#newchore')?.addEventListener('click', () => newChoreSheet(id))
@@ -879,7 +924,7 @@ async function itemSheet(id, itemId) {
   if (it.done && (it.doneBy === myId || isAdmin)) btns.push('<button class="btn btn-ghost" data-a="undone">לבטל את הסימון</button>')
   openSheet(`<h2>${esc(it.name)}${it.qty ? ` (${esc(it.qty)})` : ''}</h2>
     <p class="lead">${esc(status)}</p>
-    ${it.photoId ? `<img data-photo="${it.photoId}" alt="תמונת הוכחה" style="width:100%;border-radius:18px;margin-top:12px">` : ''}
+    ${it.photoId && !st.hidden.has(it.photoId) ? `<img data-photo="${it.photoId}" alt="תמונת הוכחה" style="width:100%;border-radius:18px;margin-top:12px"><button class="link-btn" type="button" data-photoact="${it.photoId}">${isAdmin ? 'הסתרת התמונה מכולם' : 'דיווח על התמונה'}</button>` : ''}
     <div class="stack">${btns.join('')}</div>
     ${canEdit ? `<form id="edit" novalidate><label class="lbl" for="iname">שם</label><input class="input" id="iname" maxlength="60" value="${esc(it.name)}">
       <label class="lbl" for="iqty">כמה? (לא חובה)</label><input class="input" id="iqty" maxlength="20" value="${esc(it.qty || '')}" placeholder="למשל: 20, 2 קילו">
@@ -897,6 +942,7 @@ async function itemSheet(id, itemId) {
       await closeSheet()
       await render(true)
     }))
+    root.querySelector('[data-photoact]')?.addEventListener('click', () => photoAction(id, it.photoId, isAdmin))
     const img = root.querySelector('img[data-photo]')
     if (img) Y.ensurePhoto(id, it.photoId).catch(() => undefined).then(() => photoUrl(it.photoId)).then((u) => (u ? (img.src = u) : (img.hidden = true)))
     const form = root.querySelector('#edit')
@@ -923,7 +969,7 @@ async function choreSheet(id, choreId) {
   const turn = Y.turnOf(c, roles)
   const order = Y.orderOf(c, roles).filter((m) => !roles.size || roles.has(m))
   const canEdit = c.createdBy === myId || roles.get(myId) === 'admin'
-  const hist = c.history.slice(0, 6).map((h) => `<li>${duckOf(st, rec, h.by, 22)}<span style="flex:1">${esc(who(st, rec, h.by).name)} · ${h.kind === 'pass' ? who(st, rec, h.by).g('העבירה את התור', 'העביר את התור') : 'בוצע'} ${relDay(h.at)}</span>${h.photoId ? `<img data-photo="${h.photoId}" alt="תמונת הוכחה">` : ''}</li>`).join('')
+  const hist = c.history.slice(0, 6).map((h) => `<li>${duckOf(st, rec, h.by, 22)}<span style="flex:1">${esc(who(st, rec, h.by).name)} · ${h.kind === 'pass' ? who(st, rec, h.by).g('העבירה את התור', 'העביר את התור') : 'בוצע'} ${relDay(h.at)}</span>${h.photoId && !st.hidden.has(h.photoId) ? `<img data-photo="${h.photoId}" alt="תמונת הוכחה"><button class="link-btn" type="button" data-photoact="${h.photoId}" style="padding:0 4px">${roles.get(myId) === 'admin' ? 'הסתרה' : 'דיווח'}</button>` : ''}</li>`).join('')
   openSheet(`<h2>${esc(c.emoji)} ${esc(c.name)}</h2>
     <p class="lead">${esc(Y.EVERY[c.every].label)} · ${c.everyone ? 'כל החצר בסבב' : count(order.length, 'ברווזון אחד בסבב', 'ברווזונים בסבב')}</p>
     <span class="lbl">התור</span>
@@ -939,11 +985,94 @@ async function choreSheet(id, choreId) {
       await closeSheet()
       await render(true)
     })
+    root.querySelectorAll('[data-photoact]').forEach((b) => (b.onclick = () => photoAction(id, b.dataset.photoact, roles.get(myId) === 'admin')))
     root.querySelectorAll('img[data-photo]').forEach(async (img) => {
       await Y.ensurePhoto(id, img.dataset.photo).catch(() => undefined)
       const u = await photoUrl(img.dataset.photo)
       if (u) img.src = u
       else img.hidden = true
+    })
+  })
+}
+
+// ---------- Reports (to whoever runs the yard) ----------
+
+const adminsOf = (rec) => (rec.members || []).filter((m) => m.role === 'admin').map((m) => m.id)
+
+/** Sends a report; the admins get a push that says only that there is one (the content stays in the yard). */
+async function report(id, what) {
+  const reason = prompt('מה לא בסדר? (לא חובה)') ?? null
+  if (reason === null) return false
+  const rec = await Y.localYard(id)
+  const ok = await act(() => Y.post(id, [{ t: 'report.put', rid: Y.newId('r'), ...what, reason: reason.trim().slice(0, 200) }], { body: '🚩 יש דיווח חדש בחצר', to: adminsOf(rec).filter((m) => m !== me()) }))
+  if (ok !== undefined) toast('הדיווח נשלח לאמא ברווזה. תודה 💛')
+  return true
+}
+
+async function photoAction(id, photoId, isAdmin) {
+  if (isAdmin) {
+    if (!confirm('להסתיר את התמונה מכל החצר?')) return
+    await act(() => Y.post(id, [{ t: 'photo.hide', photoId }]))
+  } else if (!(await report(id, { photoId }))) return
+  await closeSheet()
+  await render(true)
+}
+
+async function messageSheet(id, cid) {
+  const rec = await Y.localYard(id)
+  const st = Y.stateOf(rec)
+  const c = st.chat.find((x) => x.cid === cid)
+  if (!c) return
+  const mine = c.author === me()
+  const isAdmin = Y.rolesOf(rec).get(me()) === 'admin'
+  openSheet(`<h2>הודעה של ${esc(who(st, rec, c.author).name)}</h2>
+    <div class="bubble" style="margin-top:8px">${esc(c.text)}</div>
+    <div class="stack">
+      ${mine || isAdmin ? '<button class="btn btn-danger" id="del" type="button">מחיקת ההודעה</button>' : ''}
+      ${mine ? '' : '<button class="btn btn-ghost" id="rep" type="button">🚩 דיווח לאמא ברווזה</button>'}
+    </div>`, (root) => {
+    root.querySelector('#del')?.addEventListener('click', async () => {
+      if (!confirm('למחוק את ההודעה?')) return
+      await act(() => Y.post(id, [{ t: 'comment.delete', cid }]))
+      await closeSheet()
+      await render(true)
+    })
+    root.querySelector('#rep')?.addEventListener('click', async () => {
+      if (await report(id, { cid })) await closeSheet()
+    })
+  })
+}
+
+/** The admin's list of open reports: delete / hide, or dismiss. */
+async function reportsSheet(id) {
+  const rec = await Y.localYard(id)
+  const st = Y.stateOf(rec)
+  const list = Y.openReports(st)
+  openSheet(`<h2>🚩 דיווחים</h2>
+    <p class="lead">רק מי שמנהלת את החצר רואה את זה.</p>
+    ${list.map((r) => {
+      const msg = r.cid ? st.chat.find((c) => c.cid === r.cid) : null
+      const what = msg ? `<div class="bubble"><span class="by">${esc(who(st, rec, msg.author).name)}</span>${esc(msg.text)}</div>` : `<img data-photo="${esc(r.photoId)}" alt="התמונה שדווחה" style="width:100%;border-radius:14px">`
+      return `<section class="poll" style="display:flex;flex-direction:column;gap:8px">${what}
+        <span class="small muted">${count(r.count, 'דיווח אחד', 'דיווחים')}${r.reasons.length ? `: ${esc(r.reasons.join(' · '))}` : ''}</span>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="pill" type="button" data-remove="${esc(r.key)}" data-kind="${r.cid ? 'cid' : 'photo'}">${r.cid ? 'מחיקת ההודעה' : 'הסתרת התמונה'}</button>
+        <button class="pill soft" type="button" data-dismiss="${esc(r.key)}">זה בסדר</button></div></section>`
+    }).join('') || '<p class="muted">אין דיווחים פתוחים.</p>'}`, (root) => {
+    root.querySelectorAll('[data-remove]').forEach((b) => (b.onclick = async () => {
+      const ev = b.dataset.kind === 'cid' ? { t: 'comment.delete', cid: b.dataset.remove } : { t: 'photo.hide', photoId: b.dataset.remove }
+      await act(() => Y.post(id, [ev]))
+      await closeSheet()
+      await render(true)
+    }))
+    root.querySelectorAll('[data-dismiss]').forEach((b) => (b.onclick = async () => {
+      await act(() => Y.post(id, [{ t: 'report.close', key: b.dataset.dismiss }]))
+      await closeSheet()
+      await render(true)
+    }))
+    root.querySelectorAll('img[data-photo]').forEach(async (img) => {
+      await Y.ensurePhoto(id, img.dataset.photo).catch(() => undefined)
+      const u = await photoUrl(img.dataset.photo)
+      if (u) img.src = u
     })
   })
 }
@@ -1094,7 +1223,7 @@ async function chatScreen(id) {
   if (!rec) return go(`#/y/${id}`)
   const st = Y.stateOf(rec)
   const myId = me()
-  const msgs = st.chat.slice(-200).map((c) => `<div class="msg${c.author === myId ? ' me' : ''}">${duckOf(st, rec, c.author, 30)}<div class="bubble">${c.author === myId ? '' : `<span class="by">${esc(who(st, rec, c.author).name)}</span>`}${esc(c.text)}</div></div>`).join('')
+  const msgs = st.chat.slice(-200).map((c) => `<div class="msg${c.author === myId ? ' me' : ''}">${duckOf(st, rec, c.author, 30)}<div class="bubble">${c.author === myId ? '' : `<span class="by">${esc(who(st, rec, c.author).name)}</span>`}${esc(c.text)}</div><button class="link-btn" type="button" data-msg="${esc(c.cid)}" aria-label="אפשרויות להודעה" style="min-width:44px;padding:0;text-decoration:none;color:var(--ink-faint)">⋯</button></div>`).join('')
   const draft = $app.querySelector('#msg')?.value || ''
   $app.innerHTML = `<main class="screen">
     <header class="top"><a class="icon-btn" href="#/y/${id}" aria-label="חזרה לחצר">${ICON.back}</a><h1>צ׳אט<span class="sub">${esc(st.meta.emoji)} ${esc(st.meta.name)}</span></h1></header>
@@ -1105,6 +1234,7 @@ async function chatScreen(id) {
   </main>`
   const ta = $app.querySelector('#msg')
   ta.value = draft
+  $app.querySelectorAll('[data-msg]').forEach((b) => (b.onclick = () => messageSheet(id, b.dataset.msg)))
   scrollTo(0, document.body.scrollHeight)
   Y.markSeen(id)
   $app.querySelector('#f').onsubmit = async (e) => {
@@ -1386,6 +1516,7 @@ function meScreen() {
     <h2 class="section">יש לי קישור</h2>
     <button class="btn btn-ghost" id="paste" type="button">הדבקת קישור הזמנה</button>
     <h2 class="section">פרטיות</h2>
+    <button class="link-btn" type="button" data-privacy style="padding:0">מדיניות הפרטיות המלאה</button>
     <p class="muted">אין חשבון, אין מספר טלפון. השמות, הרשימות, ההודעות והתמונות מוצפנים בטלפון לפני שהם יוצאים ממנו, והשרת לא יכול לקרוא אותם.</p>
     <p class="small muted" style="margin-top:24px">החצר ${APP_VERSION}</p>
   </main>`
@@ -1407,6 +1538,7 @@ function meScreen() {
   })
   bindSave()
   $app.querySelector('#install')?.addEventListener('click', installSheet)
+  bindPrivacyLinks($app)
   $app.querySelector('#paste').onclick = pasteSheet
   $app.querySelector('#pushon')?.addEventListener('click', () => act(async () => {
     await push.enable()
