@@ -74,6 +74,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await A.page.fill('#f-why', 'מייל לכל המחלקה')
     await A.page.click('[type=submit]')
     await A.page.waitForSelector('.nk-card')
+    await A.page.goto(`${APP}#/me`)
+    await A.page.fill('#me-nick', 'מלכת הקונוסים')
+    await A.page.click('[data-acc="crown"]')
+    await A.page.click('[data-save-me]')
+    await A.page.click('.sheet [data-no]')
     await A.page.goto(`${APP}#/settings`)
     check(await A.page.isVisible('[data-act="sync-on"]'), 'A: backup is off by default')
     await A.page.screenshot({ path: path.join(OUT, 'sync-01-off.png') })
@@ -90,8 +95,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     // The server holds only ciphertext.
     const dump = d1(['--json', '--command', 'SELECT kind, data FROM items'])
     const rows = JSON.parse(dump)[0].results
-    check(rows.length === 2 && rows.some((r) => r.kind === 'photo'), 'server: one revenge + one photo record')
-    check(!dump.includes('רונית') && !dump.includes('מייל'), 'server: names and reasons are encrypted')
+    check(rows.length === 3 && rows.some((r) => r.kind === 'photo') && rows.some((r) => r.kind === 'meta'), 'server: one revenge + one photo + the cat')
+    check(!dump.includes('רונית') && !dump.includes('מייל') && !dump.includes('הקונוסים'), 'server: names, reasons and nickname are encrypted')
 
     // Phone B opens the pairing link.
     const B = await phone('B')
@@ -105,6 +110,10 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await B.page.waitForSelector('.avatar-face img[src]')
     check(true, 'B: with its photo')
     await B.page.screenshot({ path: path.join(OUT, 'sync-05-b-home.png') })
+    await B.page.waitForSelector('.me-badge')
+    check((await B.page.getAttribute('.me-badge', 'aria-label')).includes('מלכת הקונוסים'), "B: A's cat arrived through the backup")
+    const ids = await Promise.all([A, B].map((x) => x.page.evaluate(() => JSON.parse(localStorage.getItem('nk.identity')).keys.memberId)))
+    check(ids[0] === ids[1], 'A and B are the same member (same keys)')
 
     // B completes it with a documentation photo; A sees it.
     await B.page.click('.nk-card .nk-check')

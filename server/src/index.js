@@ -163,7 +163,7 @@ async function route(req, env) {
     const items = Array.isArray(body?.items) ? body.items : fail(400, 'no items')
     if (items.length > LIMITS.itemsPerPush) fail(413, 'too many items')
     for (const it of items) {
-      if (!ID.test(it?.id || '') || !['revenge', 'photo'].includes(it.kind) || typeof it.updatedAt !== 'string' || it.updatedAt.length > 40) fail(400, 'bad item')
+      if (!ID.test(it?.id || '') || !['revenge', 'photo', 'meta'].includes(it.kind) || typeof it.updatedAt !== 'string' || it.updatedAt.length > 40) fail(400, 'bad item')
       if (!it.deleted && (typeof it.data !== 'string' || it.data.length > LIMITS.itemBytes)) fail(400, 'bad item data')
     }
     const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM items WHERE space = ?').bind(sp.id).first('n')

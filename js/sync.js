@@ -8,6 +8,7 @@
 // Conflicts: last write wins per revenge (by updatedAt). Deletions travel as tombstones.
 
 import * as db from './db.js'
+import * as identity from './identity.js'
 
 const PROD_URL = 'https://nekamot-sync.guyyyy15-web.workers.dev'
 const STATE = 'nk.sync'
@@ -250,6 +251,10 @@ async function run() {
   for (const r of await db.allRevenges()) {
     if (!s.lastPush || (r.updatedAt || '') > s.lastPush) items.push({ id: r.id, kind: 'revenge', updatedAt: r.updatedAt || mark, data: await encryptJson(k.key, r) })
   }
+  // The cat and the keys behind it travel in the backup too (encrypted like everything else).
+  const me = identity.load()
+  const meStamp = me ? identity.backupStamp(me) : null
+  if (me && meStamp !== s.identityStamp) items.push({ id: 'identity', kind: 'meta', updatedAt: meStamp, data: await encryptJson(k.key, me) })
   const tombs = read(TOMBS, [])
   for (const t of tombs) items.push({ id: t.id, kind: t.kind, updatedAt: t.at, deleted: true })
   for (let i = 0; i < items.length; i += 100) {
@@ -258,7 +263,7 @@ async function run() {
   pushed = items.length
   const sentTombs = new Set(tombs.map((t) => t.id))
   write(TOMBS, read(TOMBS, []).filter((t) => !sentTombs.has(t.id)))
-  setState({ lastPush: mark, uploaded: [...uploaded] })
+  setState({ lastPush: mark, uploaded: [...uploaded], identityStamp: meStamp })
 
   // Pull.
   let since = state().since || 0
@@ -280,6 +285,11 @@ async function run() {
           const r = await decryptJson(k.key, it.data)
           await db.putRevenge(r)
           localById.set(r.id, r)
+          pulled++
+        }
+      } else if (it.kind === 'meta' && it.id === 'identity' && !it.deleted) {
+        if (identity.adopt(await decryptJson(k.key, it.data))) {
+          setState({ identityStamp: identity.backupStamp(identity.load()) })
           pulled++
         }
       } else if (it.kind === 'photo') {

@@ -1,6 +1,6 @@
 // Offline: every file the app needs is cached on install. Bump VERSION whenever a file changes
 // (tests/files.test.mjs checks that every app file is listed here).
-const VERSION = 'nekamot-v1.2.0'
+const VERSION = 'nekamot-v1.3.0'
 // Every app on guyyyy15-web.github.io shares one origin, so cache names carry this app's path.
 const SCOPE = new URL(self.registration.scope).pathname
 const CACHE = `nekamot:${SCOPE}:${VERSION}`
@@ -13,6 +13,7 @@ const FILES = [
   'js/db.js',
   'js/icons.js',
   'js/ideas.js',
+  'js/identity.js',
   'js/images.js',
   'js/logic.js',
   'js/sync.js',

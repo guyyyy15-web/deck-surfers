@@ -8,8 +8,9 @@ import * as db from './db.js'
 import { loadImage, toBlob, shrinkFile, photoUrl, rememberUrl, forgetUrl, blobToDataUrl, dataUrlToBlob, FACE_SIDE } from './images.js'
 import { IDEAS } from './ideas.js'
 import * as sync from './sync.js'
+import * as identity from './identity.js'
 
-export const APP_VERSION = '1.2.0'
+export const APP_VERSION = '1.3.0'
 
 const S = {
   list: [],
@@ -514,7 +515,7 @@ function homeScreen(tab) {
     nav: 'home',
     html: `
       ${tab === 'open' ? deco('heart', 40, 'bottom:calc(var(--nav-h) + 120px);left:64px;position:fixed;transform:rotate(-12deg)') + deco('sparkle', 22, 'bottom:calc(var(--nav-h) + 150px);right:70px;position:fixed') : ''}
-      <header class="topbar"><a class="icon-btn" href="#/settings" aria-label="הגדרות">${icon('settings', 30)}</a><h1>נקמות שלי</h1>${catHead()}</header>
+      <header class="topbar"><a class="icon-btn" href="#/settings" aria-label="הגדרות">${icon('settings', 30)}</a><h1>נקמות שלי</h1>${meBadge()}</header>
       <div style="padding:8px 24px 0"><div class="nk-tabs" role="tablist">
         <a class="nk-tab${tab === 'open' ? ' is-on' : ''}" href="#/" role="tab" aria-selected="${tab === 'open'}">נקמות פתוחות (${open.length})</a>
         <a class="nk-tab${tab === 'done' ? ' is-on' : ''}" href="#/done" role="tab" aria-selected="${tab === 'done'}">נקמות שהושלמו (${done.length})</a></div></div>
@@ -919,7 +920,7 @@ async function cropFace(file) {
 
 function statsScreen() {
   const s = stats(S.list)
-  const header = `<header class="topbar"><a class="icon-btn" href="#/settings" aria-label="הגדרות">${icon('settings', 30)}</a><h1>סטטיסטיקות</h1>${catHead()}</header>`
+  const header = `<header class="topbar"><a class="icon-btn" href="#/settings" aria-label="הגדרות">${icon('settings', 30)}</a><h1>סטטיסטיקות</h1>${meBadge()}</header>`
   if (!s.total) {
     return { nav: 'stats', html: `${header}<div class="empty">${cat(150)}<h2>עוד אין מה לספור</h2><p>אחרי כמה נקמות יופיעו כאן גרפים מרשימים ומדאיגים.</p></div>` }
   }
@@ -953,7 +954,7 @@ function ideasScreen() {
   return {
     nav: 'ideas',
     html: `
-      <header class="topbar"><a class="icon-btn" href="#/settings" aria-label="הגדרות">${icon('settings', 30)}</a><h1>השראה לנקמה</h1>${catHead()}</header>
+      <header class="topbar"><a class="icon-btn" href="#/settings" aria-label="הגדרות">${icon('settings', 30)}</a><h1>השראה לנקמה</h1>${meBadge()}</header>
       <p class="lead" style="margin-bottom:0">רק נקמות מצחיקות שלא מזיקות לאף אחד 💜</p>
       <div class="chips" role="group" aria-label="סינון לפי סוג">${chips
         .map((c) => `<button type="button" class="fchip${S.ideaFilter === c.id ? ' is-on' : ''}" data-filter="${c.id}" aria-pressed="${S.ideaFilter === c.id}">${c.icon ? icon(c.icon, 18, c.fill) : ''}${c.label}</button>`)
@@ -987,6 +988,7 @@ function settingsScreen() {
   return {
     html: `
       ${topbar({ title: 'הגדרות', start: backBtn('#/') })}
+      ${profileSection()}
       ${syncSection()}
       <section class="group"><h2>איך לפנות אליך?</h2><div class="rows">
         <div class="row"><span class="grow">לשון פנייה<small>${g('"שמרי נקמה"', '"שמור נקמה"')}</small></span>${seg('voice', [['f', 'נקבה'], ['m', 'זכר']])}</div></div></section>
@@ -1018,6 +1020,117 @@ function settingsScreen() {
         const f = e.target.files?.[0]
         e.target.value = ''
         if (f) await importBackup(f)
+      }
+    },
+  }
+}
+
+// ---------- Your cat (identity for groups) ----------
+
+/** The header's cat: your avatar once you made one, the app's cat otherwise. */
+function meBadge() {
+  const p = identity.profile()
+  return p
+    ? `<a class="icon-btn me-badge" href="#/me" aria-label="החתול שלי: ${esc(p.nickname)}">${identity.catAvatar(p, 42)}</a>`
+    : catHead()
+}
+
+function profileSection() {
+  const p = identity.profile()
+  return `<section class="group"><h2>החתול שלך</h2><div class="rows">
+    <a class="row" href="#/me">${p ? identity.catAvatar(p, 44) : icon('user', 26, 'lilac-200')}
+      <span class="grow">${p ? `<b>${esc(p.nickname)}</b><small>ככה החברים יראו אותך בקבוצות. נגיעה לעריכה.</small>` : `<b>${g('צרי', 'צור')} את החתול שלך</b><small>כינוי ודמות לקבוצות שבדרך. בלי הרשמה ובלי סיסמה.</small>`}</span>
+      ${icon('chevron-left', 20)}</a></div></section>`
+}
+
+function profileScreen() {
+  const cur = identity.profile()
+  if (!S.me) S.me = cur ? { ...cur } : { nickname: identity.suggestNickname(), color: 'lilac', accessory: 'crown' }
+  const d = S.me
+  return {
+    html: `
+      <div class="deco checker" aria-hidden="true" style="top:-30px;left:-30px;width:230px;height:150px;border-radius:0 0 60% 40% / 0 0 70% 50%"></div>
+      ${topbar({ title: 'החתול שלך', start: backBtn(cur ? '#/settings' : '#/settings') })}
+      <div class="me-stage"><div class="me-blob" data-preview>${identity.catAvatar(d, 168, 'התצוגה של החתול שלך')}</div>
+        <div class="me-name" data-name>${esc(d.nickname)}</div></div>
+      <div class="form" style="gap:20px">
+        <div class="nk-field" data-field="me-nick"><label class="nk-field-label" for="me-nick">כינוי</label>
+          <div class="nk-input">${icon('user', 24, 'lilac-200')}<input id="me-nick" maxlength="20" autocomplete="off" value="${esc(d.nickname)}">
+            <button type="button" class="clear" data-dice aria-label="כינוי אחר">${icon('dice', 24, 'lilac-200')}</button></div>
+          <div class="nk-field-error" hidden></div></div>
+        <div class="nk-field"><span class="nk-field-label" id="me-col-l">צבע</span>
+          <div class="swatches" role="radiogroup" aria-labelledby="me-col-l">${identity.CAT_COLORS.map(
+            (c) => `<button type="button" role="radio" class="swatch${c.id === d.color ? ' is-on' : ''}" aria-checked="${c.id === d.color}" aria-label="${c.label}" data-color="${c.id}" style="--c:${c.fill}"></button>`,
+          ).join('')}</div></div>
+        <div class="nk-field"><span class="nk-field-label" id="me-acc-l">אביזר</span>
+          <div class="acc-grid" role="radiogroup" aria-labelledby="me-acc-l">${identity.ACCESSORIES.map(
+            (a) => `<button type="button" role="radio" class="acc${a.id === d.accessory ? ' is-on' : ''}" aria-checked="${a.id === d.accessory}" data-acc="${a.id}">${identity.catAvatar({ color: d.color, accessory: a.id }, 52)}<span>${a.label}</span></button>`,
+          ).join('')}</div></div>
+        <div class="actions" style="padding:4px 0 0"><button type="button" class="nk-btn nk-btn-primary" data-save-me><span>זה אני!</span>${icon('check', 22)}</button></div>
+      </div>`,
+    mount(root) {
+      const preview = () => {
+        root.querySelector('[data-preview]').innerHTML = identity.catAvatar(d, 168, 'התצוגה של החתול שלך')
+        root.querySelector('[data-name]').textContent = d.nickname || ' '
+      }
+      const nick = root.querySelector('#me-nick')
+      nick.addEventListener('input', () => {
+        d.nickname = nick.value
+        root.querySelector('[data-field="me-nick"]').classList.remove('has-error')
+        preview()
+      })
+      root.querySelector('[data-dice]').onclick = () => {
+        d.nickname = identity.suggestNickname(d.nickname)
+        nick.value = d.nickname
+        buzz(15)
+        preview()
+      }
+      for (const b of root.querySelectorAll('[data-color]')) {
+        b.onclick = () => {
+          d.color = b.dataset.color
+          for (const o of root.querySelectorAll('[data-color]')) {
+            o.classList.toggle('is-on', o === b)
+            o.setAttribute('aria-checked', o === b)
+          }
+          for (const a of root.querySelectorAll('[data-acc]')) a.querySelector('svg').outerHTML = identity.catAvatar({ color: d.color, accessory: a.dataset.acc }, 52)
+          preview()
+        }
+      }
+      for (const b of root.querySelectorAll('[data-acc]')) {
+        b.onclick = () => {
+          d.accessory = b.dataset.acc
+          for (const o of root.querySelectorAll('[data-acc]')) {
+            o.classList.toggle('is-on', o === b)
+            o.setAttribute('aria-checked', o === b)
+          }
+          preview()
+        }
+      }
+      root.querySelector('[data-save-me]').onclick = async () => {
+        if (!identity.validNickname(d.nickname)) {
+          const f = root.querySelector('[data-field="me-nick"]')
+          f.classList.add('has-error')
+          f.querySelector('.nk-field-error').textContent = 'כינוי באורך 2 עד 20 תווים'
+          f.querySelector('.nk-field-error').hidden = false
+          nick.focus()
+          return
+        }
+        const first = !identity.profile()
+        await identity.saveProfile(d)
+        S.me = null
+        sync.soon()
+        confetti()
+        buzz(40)
+        go('#/settings')
+        if (first && !sync.isOn()) {
+          const ok = await confirmSheet({
+            title: 'לשמור את החתול בענן?',
+            text: 'בלי גיבוי, החתול והקבוצות שלך נשארים רק בטלפון הזה. עם גיבוי, הם עוברים איתך לכל טלפון.',
+            ok: 'הפעלת גיבוי בענן',
+            danger: false,
+          })
+          if (ok) syncAction('sync-on')
+        } else toast(first ? 'נעים להכיר 🐾' : 'נשמר')
       }
     },
   }
@@ -1310,6 +1423,7 @@ function route() {
   if (parts[0] === 'ideas') return { name: 'ideas', query }
   if (parts[0] === 'settings') return { name: 'settings', query }
   if (parts[0] === 'pair') return { name: 'pair', code: parts[1] || '', query }
+  if (parts[0] === 'me') return { name: 'me', query }
   return { name: 'missing', query }
 }
 
@@ -1317,6 +1431,7 @@ let lastKey = ''
 function render() {
   const rt = route()
   if (rt.name !== 'form') S.draft = null
+  if (rt.name !== 'me') S.me = null
   let scr
   if (rt.name === 'home') scr = homeScreen(rt.tab)
   else if (rt.name === 'details') scr = detailsScreen(byId(rt.id))
@@ -1325,6 +1440,7 @@ function render() {
   else if (rt.name === 'ideas') scr = ideasScreen()
   else if (rt.name === 'settings') scr = settingsScreen()
   else if (rt.name === 'pair') scr = pairScreen(rt.code)
+  else if (rt.name === 'me') scr = profileScreen()
   else scr = notFound()
   const key = location.hash
   const changed = key !== lastKey

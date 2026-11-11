@@ -145,3 +145,12 @@ test('one client can create only 10 backups an hour', async () => {
   const other = await fetch(`${BASE}/v1/spaces`, { method: 'POST', headers: { ...ip, 'CF-Connecting-IP': '198.51.100.9' }, body: JSON.stringify(newSpace()) })
   assert.equal(other.status, 201)
 })
+
+test('the identity record (kind meta) syncs like any other record', async () => {
+  const s = newSpace()
+  await post('/v1/spaces', null, s)
+  const r = await post('/v1/items', s, { items: [{ id: 'identity', kind: 'meta', updatedAt: '8000000000000.1790000000000', data: 'ENC' }] })
+  assert.equal((await r.json()).applied, 1)
+  const all = await (await get('/v1/changes?since=0', s)).json()
+  assert.deepEqual(all.items.map((i) => [i.id, i.kind]), [['identity', 'meta']])
+})

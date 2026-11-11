@@ -295,6 +295,20 @@ button.row:active, label.row:active { background: var(--lilac-100); }
 .steps { margin: 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 6px; }
 .foot { text-align: center; padding: 24px; color: var(--ink-muted); font-size: 13px; line-height: 20px; }
 
+/* Your cat */
+.me-badge { width: 52px; height: 52px; }
+.me-badge .cat-avatar { display: block; }
+.me-stage { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 4px 24px 8px; }
+.me-blob { padding: 14px 22px 10px; background: var(--lilac-200); border-radius: 60px 70px 64px 72px / 58px 62px 60px 66px; animation: bob 3s ease-in-out infinite; }
+.me-name { font-family: var(--font-display); font-size: 26px; line-height: 34px; font-weight: 600; min-height: 34px; text-align: center; overflow-wrap: anywhere; }
+.swatches { display: flex; gap: 12px; flex-wrap: wrap; }
+.swatch { width: 44px; height: 44px; border-radius: 999px; background: var(--c); border: 2px solid var(--line-strong); }
+.swatch.is-on { box-shadow: 0 0 0 3px var(--surface), 0 0 0 6px var(--plum); border-color: var(--ink); }
+.acc-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.acc { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px 6px; border-radius: var(--radius-md); border: 1.5px solid var(--line-strong);
+  background: var(--surface-raised); font-size: 13px; line-height: 18px; color: var(--ink); }
+.acc.is-on { border: 2.5px solid var(--plum); background: var(--lilac-100); padding: 7px 1px 5px; }
+
 /* Confetti */
 .confetti { position: fixed; inset: 0; z-index: 80; pointer-events: none; overflow: hidden; }
 .confetti i { position: absolute; top: -30px; width: 16px; height: 16px; animation: fall var(--d, 1.8s) cubic-bezier(.3, .6, .6, 1) forwards; }
