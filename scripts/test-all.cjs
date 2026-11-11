@@ -11,6 +11,7 @@ const suites = [
   ['sync (2–4 phones)', 'node', ['scripts/sync-smoke.cjs'], ROOT],
   ['groups (3 phones + push)', 'node', ['scripts/groups-smoke.cjs'], ROOT],
   ['upgrade (existing users)', 'node', ['scripts/upgrade-smoke.cjs'], ROOT],
+  ['החצר (3 phones)', 'node', ['scripts/chatzer-smoke.cjs'], ROOT],
 ]
 let failed = 0
 for (const [name, cmd, args, cwd, env] of suites) {

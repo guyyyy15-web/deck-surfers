@@ -1,0 +1,23 @@
+{
+  "id": "/",
+  "name": "החצר",
+  "short_name": "החצר",
+  "description": "מי מביא מה, תור מי, וכולם באותה חצר.",
+  "lang": "he",
+  "dir": "rtl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF8EC",
+  "theme_color": "#FFF8EC",
+  "categories": ["lifestyle", "social", "productivity"],
+  "handle_links": "preferred",
+  "launch_handler": { "client_mode": ["focus-existing", "auto"] },
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

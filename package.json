@@ -14,6 +14,8 @@
     "icons": "node scripts/icons.cjs",
     "deploy:server": "cd server && npm run db:migrate && npm run deploy",
     "smoke:groups": "node scripts/groups-smoke.cjs",
-    "smoke:upgrade": "node scripts/upgrade-smoke.cjs"
+    "smoke:upgrade": "node scripts/upgrade-smoke.cjs",
+    "smoke:chatzer": "node scripts/chatzer-smoke.cjs",
+    "deploy:chatzer": "node scripts/chatzer-deploy.cjs"
   }
 }

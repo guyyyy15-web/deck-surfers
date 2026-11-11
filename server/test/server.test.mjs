@@ -370,6 +370,23 @@ test('push: posting with a notification reaches the other members only, encrypte
   assert.equal(sentTo(subs.b).length, 1, 'cooldown holds the second push')
 })
 
+test('push: a notification can go to chosen members only ("your turn")', async () => {
+  const { g, people: [a, b, c] } = await groupOf(3)
+  const sb = subscription('tb'), sc = subscription('tc')
+  await b.call('PUT', '/v2/push', { endpoint: sb.endpoint, p256dh: sb.p256dh, auth: sb.auth })
+  await c.call('PUT', '/v2/push', { endpoint: sc.endpoint, p256dh: sc.p256dh, auth: sc.auth })
+  const r = await a.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'DONE' }], notify: { keyVersion: 1, data: 'YOUR-TURN', to: [c.id, 'not-an-id'] } })
+  assert.equal(r.status, 200)
+  await settle()
+  assert.equal(sentTo(sb).length, 0, 'B is not the one whose turn it is')
+  assert.equal(sentTo(sc).length, 1)
+  assert.equal((await decryptPush(sc, sentTo(sc)[0].body)).d, 'YOUR-TURN')
+  // An empty list notifies nobody.
+  await b.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'E' }], notify: { keyVersion: 1, data: 'N', to: [] } })
+  await settle()
+  assert.equal(sentTo(sc).length, 1)
+})
+
 test('push: old app versions (no notify) send nothing; mute; expired subscriptions are dropped', async () => {
   const { g, people: [a, b, c] } = await groupOf(3)
   const sb = subscription('mb'), sc = subscription('mc', true)

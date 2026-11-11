@@ -1,0 +1,10 @@
+# Cloudflare Pages response headers for hechatzer.pages.dev.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Permissions-Policy: geolocation=(), microphone=(), payment=()
+  X-Robots-Tag: noindex, nofollow
+
+/sw.js
+  Cache-Control: no-cache
