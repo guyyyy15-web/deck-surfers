@@ -404,3 +404,33 @@ test('push: old app versions (no notify) send nothing; mute; expired subscriptio
   // An oversize notification is ignored, the events are still stored.
   assert.equal((await a.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'E' }], notify: { keyVersion: 1, data: 'x'.repeat(3000) } })).status, 200)
 })
+
+test('sync: a full batch (200) in one request, duplicates inside a batch, gap-free sequence', async () => {
+  const s = newSpace()
+  // Its own client address, so the earlier tests' new-backup rate limit doesn't apply.
+  assert.equal((await fetch(`${BASE}/v1/spaces`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '192.0.2.77' }, body: JSON.stringify(s) })).status, 201)
+  const items = Array.from({ length: 200 }, (_, i) => ({ id: `big${String(i).padStart(4, '0')}`, kind: 'revenge', updatedAt: '2026-11-11T10:00:00.000Z', data: `D${i}` }))
+  assert.deepEqual(await (await post('/v1/items', s, { items })).json(), { applied: 200, seq: 200 })
+  // The same id twice in one request: the newer copy wins, and it counts once.
+  const r = await (await post('/v1/items', s, { items: [
+    { id: 'big0001', kind: 'revenge', updatedAt: '2026-11-11T12:00:00.000Z', data: 'NEWEST' },
+    { id: 'big0001', kind: 'revenge', updatedAt: '2026-11-11T11:00:00.000Z', data: 'NEWER' },
+    { id: 'big0002', kind: 'revenge', updatedAt: '2026-11-11T09:00:00.000Z', data: 'OLDER' },
+  ] })).json()
+  assert.deepEqual(r, { applied: 1, seq: 201 })
+  // Pull everything: 200 items, each seq once, newest data kept.
+  const all = []
+  let since = 0
+  for (;;) {
+    const page = await (await get(`/v1/changes?since=${since}`, s)).json()
+    all.push(...page.items)
+    since = page.seq
+    if (!page.more) break
+  }
+  assert.equal(all.length, 200)
+  assert.equal(new Set(all.map((i) => i.seq)).size, 200)
+  assert.equal(all.find((i) => i.id === 'big0001').data, 'NEWEST')
+  assert.equal(all.find((i) => i.id === 'big0002').data, 'D2')
+  // Nothing newer: nothing applied, seq unchanged.
+  assert.deepEqual(await (await post('/v1/items', s, { items: items.slice(0, 5) })).json(), { applied: 0, seq: 201 })
+})

@@ -169,27 +169,47 @@ async function route(req, env, ctx) {
       if (!ID.test(it?.id || '') || !['revenge', 'photo', 'meta'].includes(it.kind) || typeof it.updatedAt !== 'string' || it.updatedAt.length > 40) fail(400, 'bad item')
       if (!it.deleted && (typeof it.data !== 'string' || it.data.length > LIMITS.itemBytes)) fail(400, 'bad item data')
     }
-    const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM items WHERE space = ?').bind(sp.id).first('n')
-    if (count + items.length > LIMITS.itemsPerSpace) fail(507, 'space full')
-
-    let applied = 0
+    // A few round trips per request, not a few per item (one by one, 200 items took a minute).
+    // 1) Within the request, keep the newest copy of each id.
+    const incoming = new Map()
     for (const it of items) {
-      const cur = await env.DB.prepare('SELECT updated_at, deleted, kind FROM items WHERE space = ? AND id = ?').bind(sp.id, it.id).first()
-      if (cur && cur.updated_at >= it.updatedAt) continue
-      const seq = await env.DB.prepare('UPDATE spaces SET seq = seq + 1 WHERE id = ? RETURNING seq').bind(sp.id).first('seq')
-      await env.DB.prepare(
+      const prev = incoming.get(it.id)
+      if (!prev || it.updatedAt > prev.updatedAt) incoming.set(it.id, it)
+    }
+    // 2) What is stored now, for all of them at once (D1 allows 100 bound values per query).
+    const stored = new Map()
+    const ids = [...incoming.keys()]
+    for (let i = 0; i < ids.length; i += 90) {
+      const chunk = ids.slice(i, i + 90)
+      const { results } = await env.DB.prepare(`SELECT id, updated_at FROM items WHERE space = ? AND id IN (${chunk.map(() => '?').join(',')})`)
+        .bind(sp.id, ...chunk)
+        .all()
+      for (const r of results) stored.set(r.id, r.updated_at)
+    }
+    // 3) Last write wins.
+    const apply = [...incoming.values()].filter((it) => !stored.has(it.id) || stored.get(it.id) < it.updatedAt)
+    const added = apply.filter((it) => !stored.has(it.id)).length
+    if (added) {
+      const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM items WHERE space = ?').bind(sp.id).first('n')
+      if (count + added > LIMITS.itemsPerSpace) fail(507, 'space full')
+    }
+    if (!apply.length) {
+      return json({ applied: 0, seq: await env.DB.prepare('SELECT seq FROM spaces WHERE id = ?').bind(sp.id).first('seq') })
+    }
+    // 4) Reserve a block of sequence numbers, then write everything in one batch.
+    const end = await env.DB.prepare('UPDATE spaces SET seq = seq + ? WHERE id = ? RETURNING seq').bind(apply.length, sp.id).first('seq')
+    let seq = end - apply.length
+    await env.DB.batch(apply.map((it) =>
+      env.DB.prepare(
         `INSERT INTO items (space, id, kind, updated_at, deleted, data, seq) VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (space, id) DO UPDATE SET kind = excluded.kind, updated_at = excluded.updated_at,
-           deleted = excluded.deleted, data = excluded.data, seq = excluded.seq`,
-      )
-        .bind(sp.id, it.id, it.kind, it.updatedAt, it.deleted ? 1 : 0, it.deleted ? null : it.data, seq)
-        .run()
-      // A deleted photo record frees its file.
-      if (it.kind === 'photo' && it.deleted) await dropPhoto(env, sp.id, it.id)
-      applied++
-    }
-    const seq = await env.DB.prepare('SELECT seq FROM spaces WHERE id = ?').bind(sp.id).first('seq')
-    return json({ applied, seq })
+           deleted = excluded.deleted, data = excluded.data, seq = excluded.seq
+         WHERE excluded.updated_at > items.updated_at`,
+      ).bind(sp.id, it.id, it.kind, it.updatedAt, it.deleted ? 1 : 0, it.deleted ? null : it.data, ++seq),
+    ))
+    // A deleted photo record frees its file.
+    for (const it of apply) if (it.kind === 'photo' && it.deleted) await dropPhoto(env, sp.id, it.id)
+    return json({ applied: apply.length, seq: end })
   }
 
   const m = /^\/v1\/photos\/([A-Za-z0-9_-]{6,64})$/.exec(p)
