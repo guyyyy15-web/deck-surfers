@@ -1,4 +1,4 @@
-# Response headers for החצר (Workers static assets read this file too).
+# Response headers for החצר on Cloudflare Pages (hechatzer.pages.dev).
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
