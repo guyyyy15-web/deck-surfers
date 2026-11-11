@@ -87,3 +87,12 @@ test('invite codes parse; junk does not', () => {
   assert.equal(G.parseInvite('nope'), null)
   assert.equal(G.parseInvite('iAbCdEfGhIjKlM'), null)
 })
+
+test('pasted invites: the whole link or just the code; anything else is refused', () => {
+  const code = 'iAbCdEfGhIjKlM.SeCrEt_SeCrEt-SeCrEt12'
+  assert.equal(G.extractInvite(`https://guyyyy15-web.github.io/deck-surfers/#/join/${code}`), code)
+  assert.equal(G.extractInvite(`  הוזמנת! https://x.y/#/join/${code} 😼 `), code)
+  assert.equal(G.extractInvite(code), code)
+  assert.equal(G.extractInvite('https://x.y/#/pair/ABC'), null)
+  assert.equal(G.extractInvite(''), null)
+})

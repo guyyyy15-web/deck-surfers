@@ -1,7 +1,7 @@
 {
   "name": "nekamot",
   "private": true,
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "נקמות שלי: an offline Hebrew PWA for keeping track of small and big revenges. No build step.",
   "type": "module",
   "scripts": {

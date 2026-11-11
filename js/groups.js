@@ -236,10 +236,15 @@ export async function post(gid, evs, notify = null) {
     rec.notify = { title: `${st.meta.emoji} ${st.meta.name}`.slice(0, 60), body: String(notify.body).slice(0, 160) }
   }
   await db.putGroup(rec)
-  return flush(gid).catch((e) => {
+  try {
+    const res = await flush(gid)
+    // Show what I just did right away (and anything that arrived meanwhile), without waiting for the next poll.
+    if (res.sent) await pull(gid).catch(() => undefined)
+    return res
+  } catch (e) {
     if (e.status === 403) throw e
     return { queued: true }
-  })
+  }
 }
 
 async function flush(gid) {
@@ -285,11 +290,26 @@ export async function refresh(gid) {
   if (info.needsRotation) await rotate(gid).catch(() => undefined)
   await flush(gid).catch(() => undefined)
 
+  const added = await pull(gid)
+
+  // Make sure the others know who I am (once, and again after I edit my cat).
+  const st = stateOf(await db.getGroup(gid))
+  const mine = st.profiles.get(keys.memberId)
+  if (profile && (!mine || mine.nickname !== profile.nickname || mine.color !== profile.color || mine.accessory !== profile.accessory)) {
+    // The first introduction also tells the others someone joined.
+    await post(gid, [{ t: 'member.profile', ...pick(profile) }], mine ? null : { body: `🐾 ${profile.nickname} הצטרף/ה לקבוצה` })
+  }
+  return added
+}
+
+/** New events since the last pull (just the event log; members and keys come from refresh()). */
+async function pull(gid) {
   let added = 0
   for (;;) {
     const cur = await db.getGroup(gid)
     const page = await api('GET', `/v2/groups/${gid}/events?since=${cur.since}`)
     for (const e of page.events) {
+      if (e.seq <= cur.since) continue
       const raw = rawKey(cur, e.key_version)
       let ev = null
       if (raw) ev = await decryptEvent(raw, e.data).catch(() => null)
@@ -299,14 +319,6 @@ export async function refresh(gid) {
     cur.since = page.seq
     await db.putGroup(cur)
     if (!page.more) break
-  }
-
-  // Make sure the others know who I am (once, and again after I edit my cat).
-  const st = stateOf(await db.getGroup(gid))
-  const mine = st.profiles.get(keys.memberId)
-  if (profile && (!mine || mine.nickname !== profile.nickname || mine.color !== profile.color || mine.accessory !== profile.accessory)) {
-    // The first introduction also tells the others someone joined.
-    await post(gid, [{ t: 'member.profile', ...pick(profile) }], mine ? null : { body: `🐾 ${profile.nickname} הצטרף/ה לקבוצה` })
   }
   return added
 }
@@ -334,8 +346,14 @@ export async function listRemote() {
 export async function refreshAll() {
   const remote = await listRemote()
   const ids = new Set(remote.map((g) => g.id))
-  for (const rec of await db.allGroups()) if (!ids.has(rec.id) && !rec.removed) await db.putGroup({ ...rec, removed: true })
+  // A group I was removed from (or left on another phone) counts as a change, so the list updates.
   let added = 0
+  for (const rec of await db.allGroups()) {
+    if (!ids.has(rec.id) && !rec.removed) {
+      await db.putGroup({ ...rec, removed: true })
+      added++
+    }
+  }
   for (const g of remote) added += await refresh(g.id).catch(() => 0)
   return added
 }
@@ -351,6 +369,14 @@ export async function createInvite(gid, { days = 7, maxUses = 20 } = {}) {
   const id = newId('i')
   const res = await api('POST', `/v2/groups/${gid}/invites`, { id, authHash, wrappedKeys, days, maxUses })
   return { id, secret, code: `${id}.${secret}`, expiresAt: res.expiresAt }
+}
+
+/** Finds an invite in pasted text: the whole link, or just the code after '#/join/'. */
+export function extractInvite(text) {
+  const t = String(text || '').trim()
+  const m = /#\/join\/([\w.-]+)/.exec(t)
+  const code = m ? decodeURIComponent(m[1]) : t
+  return parseInvite(code) ? code : null
 }
 
 export function parseInvite(code) {

@@ -94,9 +94,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       return p.page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => ({ title: n.title, body: n.body, tag: n.tag })))
     }
 
-    const phone = async (name, device) => {
+    const phone = async (name, device, { installed = false } = {}) => {
       const ctx = await browser.newContext({ ...devices[device], locale: 'he-IL' })
-      await ctx.grantPermissions(['notifications'], { origin: new URL(APP).origin })
+      await ctx.grantPermissions(['notifications', 'clipboard-read', 'clipboard-write'], { origin: new URL(APP).origin })
+      // "installed": opened from the home-screen icon (iOS sets navigator.standalone).
+      if (installed) await ctx.addInitScript(() => Object.defineProperty(navigator, 'standalone', { value: true }))
       await ctx.addInitScript((url) => localStorage.setItem('nk.syncUrl', JSON.stringify(url)), API)
       const page = await ctx.newPage()
       page.errors = []
@@ -164,11 +166,27 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await B.page.waitForURL(/#\/g\//)
     check(!B.page.url().includes('.'), 'B: joined; the invite secret left the address bar')
 
-    // C (iPhone) has a cat already and joins.
-    const C = await phone('C', 'iPhone 15')
+    // C (iPhone): the link opens in Safari, which is separate from the home-screen app. Safari offers to carry
+    // the invite into the app instead of joining there.
+    const safari = await phone('C-safari', 'iPhone 15')
+    await safari.page.goto(link)
+    await safari.page.waitForSelector('[data-copy-invite]')
+    check(!(await safari.page.isVisible('[data-oath]')), 'iPhone Safari: no joining by default, a handoff instead')
+    await safari.page.click('[data-copy-invite]')
+    await safari.page.waitForSelector('.toast:has-text("הועתקה")')
+    const copied = await safari.page.evaluate(() => navigator.clipboard.readText())
+    check(copied === link, 'iPhone Safari: the invite is copied')
+    await shot(safari, '02b-handoff')
+    await safari.ctx.close()
+    // C's installed app pastes it and joins there.
+    const C = await phone('C', 'iPhone 15', { installed: true })
     await makeCat(C, 'דוקטור סרקזם', 'shades')
-    await C.page.goto(link)
+    await C.page.goto(`${APP}#/groups`)
+    await C.page.evaluate((t) => navigator.clipboard.writeText(t), `הוזמנת! ${copied}`)
+    await C.page.click('[data-paste-invite]')
+    await C.page.click('[data-from-clipboard]')
     await C.page.waitForSelector('[data-oath]')
+    check(true, 'C (installed app): pasted the invite and got the oath')
     await C.page.locator('[data-oath]').focus()
     await C.page.keyboard.press('Enter')
     await C.page.waitForURL(/#\/g\//)
@@ -255,7 +273,13 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await open(C, `#/g/${gid}?tab=chat`)
     await C.page.fill('#chat-text', 'מי מביא פופקורן?')
     await C.page.press('#chat-text', 'Enter')
-    await C.page.waitForSelector('.msg.mine:has-text("פופקורן")')
+    await C.page.waitForSelector('.msg.mine:has-text("פופקורן")', { timeout: 3000 })
+    check(true, 'C: my message shows right away (no waiting for the next poll)')
+    // C's installed app (notifications off) asks once after the first action; "later" closes it.
+    await C.page.waitForSelector('.sheet:has-text("לדעת כשקורה משהו")')
+    await C.page.click('.sheet [data-no]')
+    await C.page.waitForSelector('.sheet', { state: 'detached' })
+    check(await C.page.isVisible('.msg.mine:has-text("פופקורן")'), 'C: offered notifications once; the chat is intact after closing it')
     await open(A, `#/g/${gid}?tab=chat`)
     await A.page.waitForSelector('.msg:has-text("פופקורן")', { timeout: 15000 })
     check(true, "A: reads C's chat message")

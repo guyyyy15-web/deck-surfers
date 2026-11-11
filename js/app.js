@@ -12,7 +12,7 @@ import * as identity from './identity.js'
 import * as GU from './groups-ui.js'
 import * as push from './push.js'
 
-export const APP_VERSION = '1.5.1'
+export const APP_VERSION = '1.5.2'
 
 const S = {
   list: [],
@@ -231,6 +231,7 @@ function sheet(html, { label, onClose } = {}) {
     wrap.remove()
     document.removeEventListener('keydown', onKey)
     onClose?.()
+    if (softPending) setTimeout(softRender, 0)
   }
   const release = pushLayer(hide)
   /** Closes the sheet; resolves when it is safe to navigate. */
@@ -1302,9 +1303,17 @@ function joinSheet() {
      <div class="nk-field"><label class="nk-field-label" for="j-code">קוד סנכרון</label>
        <div class="nk-input">${icon('lock', 24, 'lilac-200')}<input id="j-code" dir="ltr" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-…"></div>
        <div class="nk-field-error" hidden></div></div>
-     <div class="actions" style="padding-top:0"><button type="button" class="nk-btn nk-btn-primary" data-go><span>חיבור</span>${icon('check', 22)}</button></div>`,
+     <div class="actions" style="padding-top:0"><button type="button" class="nk-btn nk-btn-primary" data-go><span>חיבור</span>${icon('check', 22)}</button>
+       <button type="button" class="nk-btn nk-btn-quiet" data-paste>הדבקה מהלוח</button></div>`,
     { label: 'חיבור לגיבוי קיים' },
   )
+  s.el.querySelector('[data-paste]').onclick = async () => {
+    try {
+      s.el.querySelector('#j-code').value = await navigator.clipboard.readText()
+    } catch {
+      toast('אין גישה ללוח. אפשר להדביק בשדה (לחיצה ארוכה ← הדבקה)')
+    }
+  }
   const input = s.el.querySelector('#j-code')
   const err = s.el.querySelector('.nk-field-error')
   s.el.querySelector('[data-go]').onclick = async (e) => {
@@ -1338,6 +1347,11 @@ function pairScreen(raw) {
       <div class="empty">${cat(140)}
         ${!code
           ? `<h2>הקישור לא תקין</h2><p>אולי חסר בו חלק. ${g('נסי', 'נסה')} להעתיק אותו שוב, או ${g('הקלידי', 'הקלד')} את הקוד בהגדרות.</p>`
+          : isIOS() && !isStandalone() && S.pairHere !== code
+            ? `<h2>לחבר את האפליקציה שבמסך הבית?</h2><p>באייפון, קישורים נפתחים בספארי, שהוא נפרד מהאפליקציה. כדי לחבר את האפליקציה עצמה:</p>
+               <ol class="steps" style="text-align:start"><li><button type="button" class="small-btn primary" data-copy-pair>${icon('link', 18)}העתקת הקוד</button></li>
+                 <li>פתיחת <b>נקמות שלי</b> מהאייקון</li><li>הגדרות ← <b>"יש לי קוד מטלפון אחר"</b> ← הדבקה</li></ol>
+               <button type="button" class="nk-btn nk-btn-quiet" data-pair-here style="margin-top:8px">או לחבר את ספארי</button>`
           : same
             ? `<h2>הטלפון כבר מחובר</h2><p>הוא כבר מסתנכרן עם הגיבוי הזה.</p><a class="nk-btn nk-btn-soft" href="#/" style="margin-top:16px">לנקמות</a>`
             : `<h2>לחבר את הטלפון הזה?</h2><p>הנקמות מהגיבוי בענן יופיעו כאן, ומה שכבר יש בטלפון יתווסף לגיבוי.${st.on ? ' הטלפון מחובר עכשיו לגיבוי אחר, והחיבור יחליף אותו.' : ''}</p>
@@ -1345,6 +1359,14 @@ function pairScreen(raw) {
                <p class="nk-field-error" data-err hidden style="margin-top:12px"></p>`}
       </div>`,
     mount(root) {
+      root.querySelector('[data-copy-pair]')?.addEventListener('click', async () => {
+        await copy(sync.formatCode(code))
+        toast('הקוד הועתק. עכשיו לפתוח את האפליקציה')
+      })
+      root.querySelector('[data-pair-here]')?.addEventListener('click', () => {
+        S.pairHere = code
+        render()
+      })
       const b = root.querySelector('[data-pair]')
       if (!b) return
       b.onclick = async () => {
@@ -1567,9 +1589,15 @@ function render() {
 }
 
 /** Re-render after background data changes, without the enter animation, never under a form, sheet or dialog. */
+let softPending = false
 function softRender() {
   if (['form', 'me', 'group-form', 'group-new'].includes(route().name)) return
-  if (document.querySelector('.sheet-wrap, [role="dialog"]')) return
+  // Not under an open sheet or dialog; catch up as soon as it closes (see sheet()).
+  if (document.querySelector('.sheet-wrap, [role="dialog"]')) {
+    softPending = true
+    return
+  }
+  softPending = false
   const active = document.activeElement
   if (active && /INPUT|TEXTAREA/.test(active.tagName) && active.value) return
   lastKey = location.hash
@@ -1586,7 +1614,7 @@ async function getPhotoBlob(id) {
 function groupsCtx() {
   return { icon, cat, esc, g, topbar, backBtn, sheet, confirmSheet, toast, confetti, buzz, hydrate, cropFace, go, S, typeOf, TYPES,
     dayMonth, ago, copy, field, docPicker, initialOf, colorFor, meBadge, softRender, route, getPhotoBlob,
-    maybeAskPush, pushOn: () => push.status() === 'on' }
+    maybeAskPush, pushOn: () => push.status() === 'on', isIOS, isStandalone }
 }
 
 // ---------- Theme ----------

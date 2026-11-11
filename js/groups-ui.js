@@ -157,7 +157,14 @@ function groupsHome() {
             ${n ? `<span class="badge" aria-label="${n} חדשים">${n > 99 ? '99+' : n}</span>` : ''}${ctx.icon('chevron-left', 20)}</a>`
         }).join('')}</div>
         <a class="nk-fab" href="#/groups/new" aria-label="קבוצה חדשה">${ctx.icon('plus', 34)}</a>`
-  return { nav: 'groups', html: `<header class="topbar"><a class="icon-btn" href="#/settings" aria-label="הגדרות">${ctx.icon('settings', 30)}</a><h1>קבוצות</h1>${ctx.meBadge()}</header>${body}` }
+  const paste = `<div style="display:flex;justify-content:center;padding:14px 24px 0"><button type="button" class="small-btn" data-paste-invite>${ctx.icon('link', 18)}קיבלתי הזמנה: הדבקה</button></div>`
+  return {
+    nav: 'groups',
+    html: `<header class="topbar"><a class="icon-btn" href="#/settings" aria-label="הגדרות">${ctx.icon('settings', 30)}</a><h1>קבוצות</h1>${ctx.meBadge()}</header>${paste}${body}`,
+    mount(root) {
+      root.querySelector('[data-paste-invite]').onclick = pasteInviteSheet
+    },
+  }
 }
 
 function emojiPicker(current) {
@@ -577,8 +584,19 @@ function joinScreen(code) {
   if (error) return { html: `${top}<div class="empty">${ctx.cat(140)}<h2>אי אפשר להצטרף</h2><p>${ctx.esc(error.message)}</p></div>` }
   if (!data) return { html: `${top}<div class="empty">${ctx.cat(140)}<h2>פותח את ההזמנה…</h2></div>` }
   const already = cache.has(data.groupId)
+  // iPhone opens links in Safari, which doesn't share anything with the home-screen app. Joining here would
+  // make a separate "you" that the app never sees, so first offer to carry the invite into the app.
+  const handoff = !already && !data.full && ctx.isIOS() && !ctx.isStandalone() && ctx.S.joinHere !== code
   const cats = [...data.profiles.values()].slice(0, 8).map((p) => `<span class="cats-cat">${identity.catAvatar(p, 40, p.nickname)}</span>`).join('')
-  const body = already
+  const body = handoff
+    ? `<div class="handoff"><b>יש לך את האפליקציה במסך הבית?</b>
+         <p>באייפון, קישורים נפתחים בספארי, שהוא נפרד מהאפליקציה. כדי שהקבוצה תופיע אצלך באפליקציה:</p>
+         <ol class="steps"><li><button type="button" class="small-btn primary" data-copy-invite>${ctx.icon('link', 18)}העתקת ההזמנה</button></li>
+           <li>פתיחת <b>נקמות שלי</b> מהאייקון במסך הבית</li><li>קבוצות ← <b>"קיבלתי הזמנה: הדבקה"</b></li></ol></div>
+       <div class="handoff soft"><b>עוד אין לך את האפליקציה?</b>
+         <p>${ctx.g('התקיני', 'התקן')} קודם (שיתוף ← "הוספה למסך הבית"), ואז ${ctx.g('העתיקי', 'העתק')} את ההזמנה כמו למעלה.</p>
+         <button type="button" class="nk-btn nk-btn-quiet" data-join-here>או להצטרף כאן בדפדפן</button></div>`
+    : already
     ? `<a class="nk-btn nk-btn-soft" href="#/g/${ctx.esc(data.groupId)}" style="margin-top:18px">כבר בקבוצה. לכניסה</a>`
     : data.full
       ? '<p style="color:var(--danger)">הקבוצה מלאה (20 חברים).</p>'
@@ -591,6 +609,16 @@ function joinScreen(code) {
     html: `${top}<div class="empty"><span style="font-size:64px;line-height:72px">${ctx.esc(data.meta.emoji)}</span>
       <h2>${ctx.esc(data.meta.name)}</h2><p>${data.members === 1 ? 'חבר אחד כבר בפנים' : `${data.members} חברים כבר בפנים`}</p><div class="cats-row" style="justify-content:center">${cats}</div>${body}</div>`,
     mount(root) {
+      root.querySelector('[data-copy-invite]')?.addEventListener('click', async () => {
+        await ctx.copy(G.inviteLink(code))
+        ctx.toast('ההזמנה הועתקה. עכשיו לפתוח את האפליקציה 🐾')
+      })
+      root.querySelector('[data-join-here]')?.addEventListener('click', async () => {
+        if (await ctx.confirmSheet({ title: 'להצטרף כאן בדפדפן?', text: 'הקבוצה תהיה בספארי בלבד, ולא תופיע באפליקציה במסך הבית אם יש לך. אפשר תמיד להצטרף שוב מהאפליקציה עם אותו קישור.', ok: 'להצטרף כאן', danger: false })) {
+          ctx.S.joinHere = code
+          ctx.softRender()
+        }
+      })
       const paw = root.querySelector('[data-oath]')
       if (!paw) return
       let timer = null
@@ -626,6 +654,43 @@ function joinScreen(code) {
       paw.addEventListener('contextmenu', (e) => e.preventDefault())
     },
   }
+}
+
+// ---------- Pasting an invite (it arrived in another app, or opened in Safari) ----------
+
+export function pasteInviteSheet() {
+  const s = ctx.sheet(
+    `<div class="sheet-head"><span style="font-size:44px">💌</span><h2>הדבקת הזמנה</h2><p>הקישור שקיבלת בוואטסאפ (או שהעתקת מספארי).</p></div>
+     <button type="button" class="nk-btn nk-btn-primary" data-from-clipboard style="align-self:center">${ctx.icon('link', 22)}<span>הדבקה מהלוח</span></button>
+     <div class="nk-field"><label class="nk-field-label" for="inv-text">או ${ctx.g('הדביקי', 'הדבק')} כאן</label>
+       <div class="nk-input">${ctx.icon('link', 24, 'lilac-200')}<input id="inv-text" dir="ltr" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…/#/join/…"></div>
+       <div class="nk-field-error" hidden>זה לא נראה כמו הזמנה לקבוצה</div></div>
+     <div class="actions" style="padding-top:0"><button type="button" class="nk-btn nk-btn-soft" data-go>המשך</button></div>`,
+    { label: 'הדבקת הזמנה' },
+  )
+  const input = s.el.querySelector('#inv-text')
+  const err = s.el.querySelector('.nk-field-error')
+  const go = async (text) => {
+    const code = G.extractInvite(text)
+    if (!code) {
+      err.hidden = false
+      return
+    }
+    await s.close()
+    ctx.go(`#/join/${code}`)
+  }
+  s.el.querySelector('[data-from-clipboard]').onclick = async () => {
+    try {
+      const text = await navigator.clipboard.readText()
+      input.value = text
+      await go(text)
+    } catch {
+      ctx.toast(`אין גישה ללוח. ${ctx.g('הדביקי', 'הדבק')} בשדה למטה (לחיצה ארוכה ← הדבקה)`)
+      input.focus()
+    }
+  }
+  s.el.querySelector('[data-go]').onclick = () => go(input.value)
+  input.addEventListener('keydown', (e) => e.key === 'Enter' && go(input.value))
 }
 
 // ---------- Moving a personal revenge into a group ----------

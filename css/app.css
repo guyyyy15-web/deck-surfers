@@ -341,6 +341,13 @@ button.row:active, label.row:active { background: var(--lilac-100); }
 @property --p { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
 @keyframes oath { to { --p: 100%; } }
 
+/* Invite handoff (iPhone: Safari → home-screen app) */
+.handoff { margin-top: 16px; padding: 14px 16px; border-radius: var(--radius-lg); background: var(--surface-raised); border: 1.5px solid var(--plum); text-align: start; max-width: 340px; }
+.handoff.soft { border: 1.5px dashed var(--line-strong); background: var(--lilac-100); }
+.handoff b { font-family: var(--font-display); font-size: 17px; }
+.handoff p { margin: 6px 0 0; color: var(--ink); max-width: none; font-size: 15px; line-height: 22px; }
+.handoff .steps { margin-top: 8px; font-size: 15px; }
+
 /* Your cat */
 .me-badge { width: 52px; height: 52px; }
 .me-badge .cat-avatar { display: block; }
