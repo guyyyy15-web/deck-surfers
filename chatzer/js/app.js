@@ -7,10 +7,10 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, ACCESSORIES } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.2.0'
+export const APP_VERSION = '0.2.1'
 
-// The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
-if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
+// The same files are also on GitHub Pages (this repo); the real home is hechatzer.guyyyy15-web.workers.dev.
+if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.guyyyy15-web.workers.dev/${location.hash}`)
 
 const $app = document.getElementById('app')
 let settings = db.loadSettings()
@@ -1254,7 +1254,7 @@ function pasteSheet() {
     <p class="lead">${g('הדביקי', 'הדבק')} כאן קישור הזמנה לחצר${push.isIOS() && push.standalone() ? ', או את קוד ההעברה מספארי' : ''}.</p>
     <form id="pastef" novalidate>
       <label class="sr" for="code">קישור</label>
-      <textarea class="input" id="code" rows="3" placeholder="https://hechatzer.pages.dev/#/join/…"></textarea>
+      <textarea class="input" id="code" rows="3" placeholder="https://hechatzer…/#/join/…"></textarea>
       ${navigator.clipboard?.readText ? '<button class="link-btn" type="button" id="clip">הדבקה מהלוח</button>' : ''}
       <p class="err" id="err" role="alert"></p>
       <button class="btn btn-primary btn-wide" type="submit">המשך</button>

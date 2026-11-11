@@ -31,12 +31,12 @@ docs/         README screenshots, feature specs      game/        Deck Surfers (
 ## החצר (chatzer/)
 
 A second app in this repo: group coordination (who brings what, chores in turns, polls, chat) for
-https://hechatzer.pages.dev/ (Cloudflare Pages project `hechatzer`). Product docs: the PRD and the brand
+https://hechatzer.guyyyy15-web.workers.dev/ (Cloudflare Worker `hechatzer`: static files only, root `wrangler.toml`). Product docs: the PRD and the brand
 document in Claude Docs. Same encrypted-groups design as נקמות שלי, but separate everywhere it matters:
 
 | | נקמות שלי | החצר |
 |---|---|---|
-| App | repo root (GitHub Pages) | `chatzer/`, published by Cloudflare Pages' GitHub integration on every push to `main` (root directory `chatzer`, no build) |
+| App | repo root (GitHub Pages) | `chatzer/`, published by Workers Builds (GitHub) on every push to `main`, per the root `wrangler.toml` |
 | Worker | `nekamot-sync` | `chatzer-sync` = same `server/` code, `wrangler deploy --env chatzer` |
 | D1 / R2 | `nekamot-sync` / `nekamot-photos` | `chatzer` / `chatzer-photos` (migrations: `wrangler d1 migrations apply chatzer --remote --env chatzer`) |
 | VAPID private key | Wrangler secret (default env) | Wrangler secret `--env chatzer` (its own key pair) |
@@ -45,10 +45,10 @@ document in Claude Docs. Same encrypted-groups design as נקמות שלי, but 
 - **Releasing החצר:** bump `APP_VERSION` in `chatzer/js/app.js` and `VERSION` in `chatzer/sw.js` together, add new
   files to its FILES (tests/chatzer.test.mjs checks both), run `npm test` and `npm run smoke:chatzer`, push, wait for
   green CI, then fast-forward `main` (that publishes it). A server change must be deployed to **both** Workers.
-- Why not `npm run deploy:chatzer` here: the cloud environment's proxy replaces every `Authorization` header to
-  api.cloudflare.com with the account token, and Pages uploads need their own short-lived token. The script works
-  from a machine with a normal `CLOUDFLARE_API_TOKEN`.
-- Passkeys (saved ducklings) are tied to the address `hechatzer.pages.dev`. Moving to a custom domain later needs
+- Never `wrangler deploy` the site from the cloud environment: its proxy replaces every `Authorization` header to
+  api.cloudflare.com with the account token, and asset uploads need their own short-lived token. Pushing `main`
+  publishes it. Keep the root config TOML (a `.jsonc` there would shadow `server/wrangler.toml`).
+- Passkeys (saved ducklings) are tied to the address `hechatzer.guyyyy15-web.workers.dev`. Moving to a custom domain later needs
   Related Origin Requests (`/.well-known/webauthn` on the new domain listing this one).
 - `fold()` in `chatzer/js/yard.js` owns permissions (author from the signature + current roles), like `groups.js`.
 - Copy speaks to the user via `g(f, m)` and about others via `who(...).g(f, m)` (their own form of address,
@@ -89,7 +89,7 @@ npm run smoke:sync     # 2–4 phones syncing through the local Worker
 npm run smoke:upgrade  # existing users: live version → working copy, data kept, update toast
 npm run smoke:groups   # 3 phones in a group through the local Worker, incl. push end to end (full headless Chromium)
 npm run smoke:chatzer  # החצר: 3 phones, event + home yards, race, poll, chat, offline (local Worker)
-npm run deploy:chatzer # publish chatzer/ directly (not from the cloud env; there, pushing main publishes)
+
 npm run test:all       # everything, one labelled ✅/❌ line per suite (read every line before releasing)
 npm run deploy:server  # migrations + deploy the Worker (needs CLOUDFLARE_* env, see below)
 ```

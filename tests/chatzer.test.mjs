@@ -139,7 +139,7 @@ test('chat: only the author or an admin deletes a message', () => {
 
 test('invite links are found in pasted text', () => {
   const code = 'iAbCdEfGhIjKlMnOp.QrStUvWxYz0123456789ab'
-  assert.equal(extractInvite(`בואי! https://hechatzer.pages.dev/#/join/${code}`), code)
+  assert.equal(extractInvite(`בואי! https://hechatzer…/#/join/${code}`), code)
   assert.equal(extractInvite('סתם טקסט'), null)
 })
 

@@ -35,10 +35,10 @@ workers_dev = true
 enabled = true
 
 [env.chatzer.vars]
-ALLOWED_ORIGINS = "https://hechatzer.pages.dev"
+ALLOWED_ORIGINS = "https://hechatzer.guyyyy15-web.workers.dev,https://hechatzer.pages.dev"
 ALLOW_LOCALHOST = "0"
 VAPID_PUBLIC = "BKHgn2VUUglExb_yw8B83jzk6mjIqM-K4h9uMZO4p0UzRGMMgVQtEhWstdsbqUp50chGIzZfDcRTkpD59ciS5g4"
-VAPID_SUBJECT = "https://hechatzer.pages.dev/"
+VAPID_SUBJECT = "https://hechatzer.guyyyy15-web.workers.dev/"
 
 [[env.chatzer.d1_databases]]
 binding = "DB"
