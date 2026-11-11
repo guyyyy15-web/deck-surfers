@@ -9,7 +9,7 @@ import { loadImage, toBlob, shrinkFile, photoUrl, rememberUrl, forgetUrl, blobTo
 import { IDEAS } from './ideas.js'
 import * as sync from './sync.js'
 
-export const APP_VERSION = '1.1.1'
+export const APP_VERSION = '1.2.0'
 
 const S = {
   list: [],
@@ -31,6 +31,70 @@ const openList = () => sortOpen(S.list.filter((r) => r.status === 'open'))
 const doneList = () => S.list.filter((r) => r.status === 'done')
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
 const isStandalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches
+const isAndroid = () => /Android/i.test(navigator.userAgent)
+/** A short buzz on Android (iPhone browsers ignore vibration). */
+const buzz = (ms = 25) => navigator.vibrate?.(ms)
+
+// Android/Chrome offers its own install dialog; keep the event to show it from our button.
+let installPrompt = null
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault()
+  installPrompt = e
+  if (['home', 'settings'].includes(route().name)) render()
+})
+window.addEventListener('appinstalled', () => {
+  installPrompt = null
+  toast('הותקנה! אפשר לפתוח מהאייקון במסך הבית 🎉')
+})
+
+// The last few errors, kept on the phone only, for "report a problem".
+const ERR_KEY = 'nk.errors'
+function logError(msg) {
+  try {
+    const list = JSON.parse(localStorage.getItem(ERR_KEY) || '[]')
+    list.push({ at: new Date().toISOString(), msg: String(msg).slice(0, 200) })
+    localStorage.setItem(ERR_KEY, JSON.stringify(list.slice(-5)))
+  } catch {
+    /* storage unavailable */
+  }
+}
+window.addEventListener('error', (e) => logError(e.message))
+window.addEventListener('unhandledrejection', (e) => logError(e.reason?.message || e.reason))
+
+// ---------- Back button ----------
+// Each overlay (sheet, photo cropper) adds a history entry, so Android's Back button and the browser's
+// back gesture close the overlay instead of leaving the screen or the app.
+const layers = []
+let popWaiter = null
+window.addEventListener('popstate', () => {
+  if (popWaiter) {
+    const done = popWaiter
+    popWaiter = null
+    done()
+    return
+  }
+  layers.pop()?.()
+})
+/** Registers an overlay; returns `release`, to call when it closes itself (resolves once Back is undone). */
+function pushLayer(onBack) {
+  history.pushState({ nkLayer: true }, '')
+  layers.push(onBack)
+  return () => {
+    const i = layers.lastIndexOf(onBack)
+    if (i < 0) return Promise.resolve()
+    layers.splice(i, 1)
+    return new Promise((resolve) => {
+      popWaiter = resolve
+      history.back()
+      setTimeout(() => {
+        if (popWaiter === resolve) {
+          popWaiter = null
+          resolve()
+        }
+      }, 600)
+    })
+  }
+}
 
 function go(hash, replace = false) {
   if (replace) location.replace(hash)
@@ -152,10 +216,19 @@ function sheet(html, { label, onClose } = {}) {
   const wrap = document.createElement('div')
   wrap.className = 'sheet-wrap'
   wrap.innerHTML = `<div class="sheet-scrim" data-close></div><section class="sheet" role="dialog" aria-modal="true" aria-label="${esc(label || '')}"><span class="grabber" aria-hidden="true"></span>${html}</section>`
-  const close = () => {
+  let open = true
+  const hide = () => {
+    if (!open) return
+    open = false
     wrap.remove()
     document.removeEventListener('keydown', onKey)
     onClose?.()
+  }
+  const release = pushLayer(hide)
+  /** Closes the sheet; resolves when it is safe to navigate. */
+  const close = () => {
+    hide()
+    return release()
   }
   const onKey = (e) => e.key === 'Escape' && close()
   wrap.querySelector('[data-close]').onclick = close
@@ -190,9 +263,9 @@ function confirmSheet({ title, text, ok, danger = true }) {
          <button type="button" class="nk-btn nk-btn-quiet" data-no>ביטול</button></div>`,
       { label: title, onClose: () => !answered && resolve(false) },
     )
-    s.el.querySelector('[data-ok]').onclick = () => {
+    s.el.querySelector('[data-ok]').onclick = async () => {
       answered = true
-      s.close()
+      await s.close()
       resolve(true)
     }
     s.el.querySelector('[data-no]').onclick = () => s.close()
@@ -257,8 +330,9 @@ function completeSheet(r, from) {
       if (state.docBlob) next.docPhotoId = await storePhoto(state.docBlob, 'doc')
     }
     await save(next)
-    s.close()
+    await s.close()
     confetti()
+    buzz(40)
     const undo = {
       label: 'ביטול',
       run: async () => {
@@ -343,9 +417,77 @@ function cardDone(r) {
 }
 
 function installBanner() {
-  if (!isIOS() || isStandalone() || S.settings.hideInstall) return ''
-  return `<div class="banner">${icon('phone', 26, 'lilac-200')}<div><b>להתקנה על האייפון</b><br>בספארי: ${icon('share', 16)} שיתוף ← "הוספה למסך הבית". ככה היא נפתחת כמו אפליקציה ועובדת גם בלי אינטרנט.</div>
+  if (isStandalone() || S.settings.hideInstall) return ''
+  let body
+  if (installPrompt) {
+    body = `<b>להתקין כאפליקציה?</b><br>נפתחת מהאייקון, במסך מלא, וגם בלי אינטרנט.
+      <br><button type="button" class="small-btn primary" data-act="install" style="margin-top:10px">${icon('download', 18)}התקנה</button>`
+  } else if (isIOS()) {
+    body = `<b>להתקנה על האייפון</b><br>בספארי: ${icon('share', 16)} שיתוף ← "הוספה למסך הבית". ככה היא נפתחת כמו אפליקציה ועובדת גם בלי אינטרנט.`
+  } else if (isAndroid()) {
+    body = `<b>להתקנה על הטלפון</b><br>בכרום: תפריט ⋮ ← "הוספה למסך הבית" או "התקנת אפליקציה". ככה היא נפתחת כמו אפליקציה ועובדת גם בלי אינטרנט.`
+  } else return ''
+  return `<div class="banner">${icon('phone', 26, 'lilac-200')}<div>${body}</div>
     <button type="button" class="icon-btn x" data-act="hide-install" aria-label="סגירה">${icon('x', 20)}</button></div>`
+}
+
+function installSteps() {
+  if (isStandalone()) return `<span class="grow">${icon('check', 20)} האפליקציה מותקנת במסך הבית.</span>`
+  if (installPrompt) {
+    return `<span class="grow">אפשר להתקין אותה כאפליקציה: אייקון במסך הבית, מסך מלא, עובדת בלי אינטרנט.</span>
+      <button type="button" class="small-btn primary" data-act="install">${icon('download', 18)}התקנה</button>`
+  }
+  if (isAndroid()) {
+    return `<ol class="steps"><li>לפתוח את הקישור ב<b>כרום</b>.</li><li>ללחוץ על <b>⋮</b> בפינה למעלה.</li><li>לבחור <b>"הוספה למסך הבית"</b> או <b>"התקנת אפליקציה"</b>.</li><li>מעכשיו היא נפתחת מהאייקון, במסך מלא, וגם בלי אינטרנט.</li></ol>`
+  }
+  return `<ol class="steps"><li>לפתוח את הקישור ב<b>ספארי</b>.</li><li>ללחוץ על ${icon('share', 18)} <b>שיתוף</b> בתחתית המסך.</li><li>לבחור <b>"הוספה למסך הבית"</b> ואז <b>"הוספה"</b>.</li><li>מעכשיו היא נפתחת מהאייקון, במסך מלא, וגם בלי אינטרנט.</li></ol>`
+}
+
+function feedbackSheet() {
+  const s = sheet(
+    `<div class="sheet-head">${icon('note', 40, 'lilac-200')}<h2>משוב ודיווח על בעיה</h2>
+       <p>זו גרסת בטא לחברים. כל הערה עוזרת: מה לא עבד, מה מבלבל, מה היה כיף.</p></div>
+     <div class="nk-field"><label class="nk-field-label" for="fb-text">מה קרה?</label>
+       <div class="nk-input is-multi">${icon('note', 24, 'lilac-200')}<textarea id="fb-text" rows="4" placeholder="למשל: לחצתי על… וקרה…"></textarea></div></div>
+     <label class="row" style="border:0;padding:0;min-height:40px"><input type="checkbox" id="fb-tech" checked style="width:22px;height:22px;accent-color:var(--plum)">
+       <span class="grow">לצרף פרטים טכניים<small>גרסה, סוג מכשיר ודפדפן, ושגיאות אחרונות. בלי נקמות ובלי תמונות.</small></span></label>
+     <div class="actions" style="padding-top:0"><button type="button" class="nk-btn nk-btn-primary" data-send>${icon('share', 22)}<span>שליחה</span></button></div>`,
+    { label: 'משוב' },
+  )
+  s.el.querySelector('[data-send]').onclick = async () => {
+    const text = s.el.querySelector('#fb-text').value.trim()
+    let body = `משוב על "נקמות שלי"\n\n${text || '(בלי טקסט)'}`
+    if (s.el.querySelector('#fb-tech').checked) body += `\n\n---\n${techInfo()}`
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'משוב: נקמות שלי', text: body })
+        await s.close()
+        toast('תודה! 💜')
+        return
+      } catch (e) {
+        if (e.name === 'AbortError') return
+      }
+    }
+    await copy(body)
+    await s.close()
+    toast('הועתק. אפשר להדביק בוואטסאפ למי שהזמין אותך 💜')
+  }
+}
+
+function techInfo() {
+  const ua = navigator.userAgent
+  const device = isIOS() ? `iOS ${(/OS (\d+[_\d]*)/.exec(ua)?.[1] || '?').replace(/_/g, '.')}` : isAndroid() ? `Android ${/Android ([\d.]+)/.exec(ua)?.[1] || '?'}` : 'אחר'
+  const browser = /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox/.test(ua) ? 'Firefox' : /SamsungBrowser/.test(ua) ? 'Samsung' : /Safari/.test(ua) ? 'Safari' : 'אחר'
+  let errors = []
+  try {
+    errors = JSON.parse(localStorage.getItem(ERR_KEY) || '[]')
+  } catch { /* none */ }
+  return [
+    `גרסה: ${APP_VERSION}`,
+    `מכשיר: ${device} · ${browser} · ${isStandalone() ? 'מותקנת' : 'בדפדפן'} · ${innerWidth}×${innerHeight}`,
+    `גיבוי בענן: ${sync.isOn() ? 'פעיל' : 'כבוי'} · נקמות: ${S.list.length}`,
+    errors.length ? `שגיאות אחרונות:\n${errors.map((e) => `${e.at.slice(5, 16)} ${e.msg}`).join('\n')}` : 'שגיאות אחרונות: אין',
+  ].join('\n')
 }
 
 function homeScreen(tab) {
@@ -652,6 +794,17 @@ async function cropFace(file) {
         <label class="nk-btn nk-btn-quiet">${g('בחרי תמונה אחרת', 'בחר תמונה אחרת')}<input type="file" accept="image/*" class="sr-only" data-other></label></div>`
     document.body.append(ov)
     document.body.style.overflow = 'hidden'
+    let shown = true
+    const hide = () => {
+      if (!shown) return false
+      shown = false
+      window.removeEventListener('resize', layout)
+      document.body.style.overflow = ''
+      URL.revokeObjectURL(url)
+      ov.remove()
+      return true
+    }
+    const release = pushLayer(() => hide() && resolve(null))
 
     const stage = ov.querySelector('[data-stage]')
     const pic = stage.querySelector('img')
@@ -741,18 +894,16 @@ async function cropFace(file) {
       zoomTo((st.scale / base) * 100 * (e.deltaY < 0 ? 1.08 : 1 / 1.08), p.x, p.y)
     }, { passive: false })
 
-    const close = (result, settle = true) => {
-      window.removeEventListener('resize', layout)
-      document.body.style.overflow = ''
-      URL.revokeObjectURL(url)
-      ov.remove()
+    const close = async (result, settle = true) => {
+      hide()
+      await release()
       if (settle) resolve(result)
     }
     ov.querySelector('[data-cancel]').onclick = () => close(null)
     ov.querySelector('[data-other]').onchange = async (e) => {
       const f = e.target.files?.[0]
       if (!f) return
-      close(null, false)
+      await close(null, false)
       resolve(await cropFace(f))
     }
     ov.querySelector('[data-ok]').onclick = async () => {
@@ -841,16 +992,16 @@ function settingsScreen() {
         <div class="row"><span class="grow">לשון פנייה<small>${g('"שמרי נקמה"', '"שמור נקמה"')}</small></span>${seg('voice', [['f', 'נקבה'], ['m', 'זכר']])}</div></div></section>
       <section class="group"><h2>מראה</h2><div class="rows">
         <div class="row"><span class="grow">ערכת צבעים</span>${seg('theme', [['auto', 'אוטומטי'], ['light', 'בהיר'], ['dark', 'כהה']])}</div></div></section>
-      <section class="group"><h2>התקנה על האייפון</h2><div class="rows"><div class="row" style="align-items:flex-start;padding:14px 16px">
-        ${isStandalone()
-          ? `<span class="grow">${icon('check', 20)} האפליקציה מותקנת במסך הבית.</span>`
-          : `<ol class="steps"><li>לפתוח את הקישור ב<b>ספארי</b>.</li><li>ללחוץ על ${icon('share', 18)} <b>שיתוף</b> בתחתית המסך.</li><li>לבחור <b>"הוספה למסך הבית"</b> ואז <b>"הוספה"</b>.</li><li>מעכשיו היא נפתחת מהאייקון, במסך מלא, וגם בלי אינטרנט.</li></ol>`}</div></div></section>
+      <section class="group"><h2>התקנה על הטלפון</h2><div class="rows"><div class="row" style="align-items:flex-start;padding:14px 16px">
+        ${installSteps()}</div></div></section>
+      <section class="group"><h2>גרסת בטא</h2><div class="rows">
+        <button type="button" class="row" data-act="feedback">${icon('note', 24)}<span class="grow">משוב ודיווח על בעיה<small>נשלח למי שהזמין אותך, דרך וואטסאפ או כל אפליקציה אחרת.</small></span></button></div></section>
       <section class="group"><h2>הנתונים שלך</h2><div class="rows">
         <div class="row">${icon('lock', 24, 'lilac-200')}<span class="grow">${sync.isOn() ? 'הכל שמור בטלפון, ובענן רק עותק מוצפן' : 'הכל נשמר רק בטלפון הזה'}<small>${sync.isOn() ? 'רק טלפון עם קוד הסנכרון יכול לפתוח אותו.' : 'אין שרת, אין חשבון ואף אחד אחר לא רואה.'} <span data-used></span></small></span></div>
         <button type="button" class="row" data-act="export">${icon('download', 24)}<span class="grow">ייצוא גיבוי<small>קובץ אחד עם כל הנקמות והתמונות. ${g('שמרי', 'שמור')} אותו בקבצים או ב־iCloud.</small></span></button>
         <label class="row">${icon('share', 24)}<span class="grow">ייבוא גיבוי<small>מאחד עם מה שכבר יש כאן. גם להעברה לטלפון חדש.</small></span><input type="file" accept="application/json,.json" data-import aria-label="קובץ גיבוי"></label>
         <button type="button" class="row danger" data-act="wipe">${icon('trash', 24)}<span class="grow">מחיקת כל הנתונים</span></button></div></section>
-      <p class="foot">נקמות שלי · גרסה ${APP_VERSION}<br>נקמה היא מנה שמוגשת עם חתול 🐱</p>`,
+      <p class="foot">נקמות שלי · גרסה ${APP_VERSION} · בטא לחברים<br>נקמה היא מנה שמוגשת עם חתול 🐱</p>`,
     mount(root) {
       for (const b of root.querySelectorAll('[data-set]')) {
         b.onclick = () => {
@@ -966,7 +1117,7 @@ function joinSheet() {
     e.currentTarget.disabled = true
     try {
       await joinWith(input.value)
-      s.close()
+      await s.close()
     } catch (x) {
       err.textContent = x.message
       err.hidden = false
@@ -1117,6 +1268,14 @@ app.addEventListener('click', async (e) => {
     const list = IDEAS.filter((i) => (S.ideaFilter === 'all' || i.type === S.ideaFilter) && i !== S.lucky)
     S.lucky = list[Math.floor(Math.random() * list.length)] || S.lucky
     render()
+  } else if (act === 'install' && installPrompt) {
+    const p = installPrompt
+    installPrompt = null
+    await p.prompt()
+    await p.userChoice.catch(() => undefined)
+    render()
+  } else if (act === 'feedback') {
+    feedbackSheet()
   } else if (act.startsWith('sync-')) {
     syncAction(act)
   } else if (act === 'export') {

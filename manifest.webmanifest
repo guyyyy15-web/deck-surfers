@@ -11,8 +11,75 @@
   "background_color": "#fcf1e7",
   "theme_color": "#fcf1e7",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "id": "./",
+  "categories": [
+    "lifestyle",
+    "entertainment"
+  ],
+  "shortcuts": [
+    {
+      "name": "נקמה חדשה",
+      "short_name": "נקמה חדשה",
+      "url": "./#/new",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "השראה לנקמה",
+      "short_name": "השראה",
+      "url": "./#/ideas",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "docs/05-home.png",
+      "sizes": "393x659",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "הנקמות הפתוחות"
+    },
+    {
+      "src": "docs/03-new.png",
+      "sizes": "393x659",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "נקמה חדשה"
+    },
+    {
+      "src": "docs/08-history.png",
+      "sizes": "393x659",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "היסטוריה"
+    }
   ]
 }

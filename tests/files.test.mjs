@@ -20,6 +20,8 @@ test('no absolute URLs (the app lives under /<repo>/ on GitHub Pages)', () => {
   const manifest = JSON.parse(readFileSync(new URL('manifest.webmanifest', root), 'utf8'))
   assert.equal(manifest.start_url, '.')
   for (const i of manifest.icons) assert.ok(existsSync(new URL(i.src, root)), i.src)
+  for (const i of [...(manifest.screenshots || []), ...(manifest.shortcuts || []).flatMap((x) => x.icons)]) assert.ok(existsSync(new URL(i.src, root)), i.src)
+  for (const sc of manifest.shortcuts || []) assert.ok(sc.url.startsWith('./#/'), `shortcut ${sc.url} stays inside the app`)
 })
 
 test('cache version matches the app version', () => {

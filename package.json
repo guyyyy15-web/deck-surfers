@@ -1,14 +1,14 @@
 {
   "name": "nekamot",
   "private": true,
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "נקמות שלי: an offline Hebrew PWA for keeping track of small and big revenges. No build step.",
   "type": "module",
   "scripts": {
     "serve": "node scripts/serve.cjs 8080",
     "test": "node --test tests/*.test.mjs",
     "test:server": "cd server && npm test",
-    "smoke": "node scripts/smoke.cjs",
+    "smoke": "node scripts/smoke.cjs && DEVICE=\"Pixel 7\" node scripts/smoke.cjs",
     "smoke:sync": "node scripts/sync-smoke.cjs",
     "test:all": "npm test && npm run test:server && npm run smoke && npm run smoke:sync",
     "icons": "node scripts/icons.cjs",

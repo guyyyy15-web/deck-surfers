@@ -8,6 +8,10 @@ const path = require('path')
 
 const ROOT = path.join(__dirname, '..')
 const OUT = path.join(ROOT, 'screenshots')
+// DEVICE="Pixel 7" runs the same walk-through as an Android phone.
+const DEVICE = process.env.DEVICE || 'iPhone 15'
+const ANDROID = /Pixel|Galaxy|Android/.test(DEVICE)
+const TAG = ANDROID ? 'android-' : ''
 const PORT = 8765
 const URL_ = `http://localhost:${PORT}/`
 fs.mkdirSync(OUT, { recursive: true })
@@ -34,12 +38,13 @@ const check = (cond, msg) => {
     await maker.close()
     const file = (name, buffer) => ({ name, mimeType: 'image/png', buffer })
 
-    const context = await browser.newContext({ ...devices['iPhone 15'], locale: 'he-IL', timezoneId: 'Asia/Jerusalem', acceptDownloads: true })
+    const context = await browser.newContext({ ...devices[DEVICE], locale: 'he-IL', timezoneId: 'Asia/Jerusalem', acceptDownloads: true })
+    console.log(`device: ${DEVICE}`)
     const page = await context.newPage()
     const errors = []
     page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
     page.on('pageerror', (e) => errors.push(String(e)))
-    const shot = (name) => page.screenshot({ path: path.join(OUT, `${name}.png`) })
+    const shot = (name) => page.screenshot({ path: path.join(OUT, `${TAG}${name}.png`) })
     const noSideScroll = async (where) => {
       const ok = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)
       check(ok, `${where}: no sideways scrolling`)
@@ -53,7 +58,8 @@ const check = (cond, msg) => {
     await shot('01-splash')
     await page.waitForSelector('#splash', { state: 'detached' })
     check(await page.isVisible('.empty'), 'home: empty state with the cat')
-    check(await page.isVisible('.banner'), 'home: iPhone install hint in Safari')
+    check(await page.isVisible('.banner'), `home: install hint (${ANDROID ? 'Chrome menu' : 'Safari share'})`)
+    check((await page.textContent('.banner')).includes(ANDROID ? 'כרום' : 'ספארי'), 'install hint matches the platform')
     await shot('02-home-empty')
     await page.click('[data-act="hide-install"]')
     check(!(await page.isVisible('.banner')), 'install hint can be dismissed')
@@ -110,6 +116,18 @@ const check = (cond, msg) => {
     await page.waitForTimeout(300)
     await shot('05-home')
     await noSideScroll('home')
+
+    // Back button / back gesture closes a sheet and stays on the screen.
+    await page.click('.nk-card:has-text("השליח") .nk-check')
+    await page.waitForSelector('.sheet')
+    await page.goBack()
+    await page.waitForSelector('.sheet', { state: 'detached' })
+    check((await page.locator('.nk-card').count()) === 3 && !(await page.isVisible('form')), 'Back closes the sheet and stays on the list')
+    await page.goBack().catch(() => undefined)
+    await page.waitForTimeout(200)
+    check(await page.isVisible('form'), 'one more Back goes to the previous screen')
+    await page.goForward()
+    await page.waitForSelector('.nk-card')
 
     // 3. Details + calendar reminder.
     await page.click('.nk-card-title:text("רונית מהחשבות")')
@@ -197,6 +215,14 @@ const check = (cond, msg) => {
     await page.waitForSelector('.seg')
     await page.waitForTimeout(400)
     await shot('12-settings')
+    await page.click('[data-act="feedback"]')
+    await page.fill('#fb-text', 'בדיקה אוטומטית')
+    await page.evaluate(() => { delete navigator.share; navigator.clipboard.writeText = async (t) => { window.__copied = t } })
+    await page.click('[data-send]')
+    await page.waitForSelector('.toast:has-text("הועתק")')
+    const report = await page.evaluate(() => window.__copied)
+    check(report.includes('בדיקה אוטומטית') && report.includes('גרסה:') && report.includes(ANDROID ? 'Android' : 'iOS'), 'feedback: report with version and device')
+    check(!report.includes('רונית'), 'feedback: no revenge content in the report')
     await page.click('[data-set="voice"][data-val="m"]')
     await page.goto(`${URL_}#/new`)
     check((await page.textContent('[type=submit]')).includes('שמור נקמה'), 'masculine wording: "שמור נקמה"')
