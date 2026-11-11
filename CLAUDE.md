@@ -56,7 +56,12 @@ npm run deploy:server  # migrations + deploy the Worker (needs CLOUDFLARE_* env,
 ```
 
 Deploying the app = pushing to `main` (GitHub Pages). CI (`.github/workflows/ci.yml`) runs all tests on
-every push; check it is green.
+every push. **Push to the `claude/…` branch first, wait for green, then fast-forward `main`.**
+
+Waiting for CI: always `node scripts/ci-watch.mjs` (run in the background), never an open-ended loop.
+It exits 2 if a step runs past `--stall` minutes and 3 past `--deadline`: then read the job log
+(GitHub MCP `get_job_logs`), fix, and push again (the new push cancels the old run).
+Every CI job and slow step has `timeout-minutes`; keep it that way when adding steps.
 
 In the cloud dev environment, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN=proxy-injected` and
 `SUPABASE_ACCESS_TOKEN=sbp_000…` are placeholders: the real tokens are injected by the network proxy.
