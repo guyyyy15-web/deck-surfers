@@ -8,6 +8,11 @@ const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 const port = Number(process.argv[2] || 8080)
 http.createServer((req, res) => {
   let p = decodeURIComponent(new URL(req.url, 'http://x').pathname)
+  // PAGES_LIKE=1: answer /…/index.html with a redirect to /…/, like Cloudflare Pages (החצר's tests use it).
+  if (process.env.PAGES_LIKE === '1' && p.endsWith('/index.html')) {
+    res.writeHead(308, { Location: p.slice(0, -'index.html'.length) })
+    return res.end()
+  }
   if (p.endsWith('/')) p += 'index.html'
   const file = path.join(root, path.normalize(p))
   if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end('not found') }

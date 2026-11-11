@@ -149,7 +149,9 @@ test('every app file is in the service worker cache list, and nothing missing', 
   const listed = JSON.parse(/const FILES = (\[[\s\S]*?\])/.exec(sw)[1].replace(/'/g, '"').replace(/,\s*\]/, ']'))
   const walk = (d) => fs.readdirSync(path.join(root, d), { withFileTypes: true }).flatMap((f) => (f.isDirectory() ? walk(path.join(d, f.name)) : [path.join(d, f.name)]))
   const files = walk('.').map((f) => f.replace(/^\.\//, '')).filter((f) => !/(^sw\.js$|^_headers$|LICENSE|\.md$)/.test(f))
-  for (const f of files) assert.ok(listed.includes(f), `${f} is not in FILES (sw.js)`)
+  // index.html is cached as './' (Pages redirects /index.html → /, see sw.js).
+  assert.ok(!listed.includes('index.html'), 'index.html must be cached as ./ only')
+  for (const f of files) if (f !== 'index.html') assert.ok(listed.includes(f), `${f} is not in FILES (sw.js)`)
   for (const f of listed) if (f !== './') assert.ok(fs.existsSync(path.join(root, f)), `${f} is listed but missing`)
   const app = fs.readFileSync(path.join(root, 'js', 'app.js'), 'utf8')
   assert.equal(/APP_VERSION = '([^']+)'/.exec(app)[1], /VERSION = 'chatzer-v([^']+)'/.exec(sw)[1], 'APP_VERSION and sw VERSION match')

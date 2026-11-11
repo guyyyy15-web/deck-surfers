@@ -27,7 +27,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   execFileSync('npx', ['wrangler', 'd1', 'migrations', 'apply', 'nekamot-sync', '--local', '--persist-to', persist], { cwd: SERVER, env, stdio: 'pipe' })
   const api = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(API_PORT), '--persist-to', persist, '--var', 'ALLOW_LOCALHOST:1', '--var', 'PUSH_COOLDOWN_MS:0'],
     { cwd: SERVER, env, detached: true, stdio: 'ignore' })
-  const web = spawn(process.execPath, [path.join(__dirname, 'serve.cjs'), String(APP_PORT)], { stdio: 'ignore' })
+  // Served like Cloudflare Pages (/index.html redirects to /), so the service worker is tested the way it runs.
+  const web = spawn(process.execPath, [path.join(__dirname, 'serve.cjs'), String(APP_PORT)], { stdio: 'ignore', env: { ...process.env, PAGES_LIKE: '1' } })
   for (let i = 0; i < 120; i++) {
     try {
       if ((await fetch(`${API}/v1/health`)).ok) break

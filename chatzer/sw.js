@@ -1,10 +1,11 @@
 // Offline: every file the app needs is cached on install. Bump VERSION (and APP_VERSION in js/app.js) on
 // every change; tests/chatzer.test.mjs checks that every file is listed here.
-const VERSION = 'chatzer-v0.2.2'
+const VERSION = 'chatzer-v0.2.3'
 const CACHE = `chatzer:${VERSION}`
+// The shell is cached as './' only: Cloudflare Pages answers /index.html with a redirect to /, and a page can't be
+// opened from a redirected response (the installed app would fail to start).
 const FILES = [
   './',
-  'index.html',
   'manifest.webmanifest',
   'css/app.css',
   'js/app.js',
@@ -38,6 +39,12 @@ self.addEventListener('activate', (e) => {
   )
 })
 
+/** A cached response that came through a redirect can't answer a navigation: copy it into a plain one. */
+async function clean(r) {
+  if (!r.redirected) return r
+  return new Response(await r.blob(), { status: r.status, statusText: r.statusText, headers: r.headers })
+}
+
 self.addEventListener('fetch', (e) => {
   const req = e.request
   const url = new URL(req.url)
@@ -46,7 +53,7 @@ self.addEventListener('fetch', (e) => {
   const rel = url.pathname.slice(scope.length)
   if (rel !== '' && rel !== 'index.html' && !FILES.includes(rel)) return
   if (req.mode === 'navigate') {
-    e.respondWith(caches.open(CACHE).then((c) => c.match('index.html')).then((r) => r || fetch(req)))
+    e.respondWith(caches.open(CACHE).then((c) => c.match('./')).then((r) => (r ? clean(r) : fetch(req))))
     return
   }
   e.respondWith(caches.open(CACHE).then((c) => c.match(req, { ignoreSearch: true })).then((r) => r || fetch(req)))
