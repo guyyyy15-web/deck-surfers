@@ -294,6 +294,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await noa.page.waitForSelector('.yard-card', { timeout: 20000 })
     check((await noa.page.$$('.yard-card')).length === 2 && (await noa.page.isVisible('text=שלום נועה')), 'empty app + Face ID → the same duckling and both yards back')
     await shot(noa, '19-signed-in')
+    // A phone that signed in with one save knows all of them (each save lists the others), and can remove them.
+    await noa.page.goto(`${APP}#/me`)
+    await noa.page.waitForSelector('#save >> text=קוד שמירה ✓', { timeout: 10000 })
+    check((await noa.page.$$('[data-unsave]')).length === 2, 'after signing in with Face ID, the save code is known too')
+    for (let i = 0; i < 2; i++) {
+      await noa.page.click('[data-unsave]')
+      await wait(800)
+    }
+    await noa.page.waitForSelector('#save-pk')
+    check((await noa.page.$$('[data-unsave]')).length === 0, 'both saves removed from this phone')
 
     check(errors.length === 0, `no errors in the pages${errors.length ? `: ${errors.join(' | ')}` : ''}`)
     console.log('\nall good')

@@ -53,9 +53,10 @@ function forgetLocal(kind) {
 
 // ---------- Vault contents ----------
 
-async function seal(keyBytes) {
+async function seal(keyBytes, vaults) {
   const id = identity.load()
-  const plain = enc.encode(JSON.stringify({ v: 1, keys: id.keys, profile: id.profile, voice: db.loadSettings().voice }))
+  // `vaults`: every save of this duckling (kind, id, key), so a phone that opens one can also update or remove the others.
+  const plain = enc.encode(JSON.stringify({ v: 1, keys: id.keys, profile: id.profile, voice: db.loadSettings().voice, vaults }))
   const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt'])
   const iv = rand(12)
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain))
@@ -70,9 +71,10 @@ async function unseal(keyBytes, data) {
   return JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12) }, key, bytes.subarray(12))))
 }
 
-async function upload(v) {
+/** Writes one save. `list`: all saves after this write (defaults to what this phone knows). */
+async function upload(v, list = saved()) {
   await Y.register()
-  await Y.api('PUT', `/v2/vault/${v.id}`, { data: await seal(v.key) })
+  await Y.api('PUT', `/v2/vault/${v.id}`, { data: await seal(v.key, list) })
 }
 
 /** Opens a vault and becomes that duckling on this phone; then fetches its yards. */
@@ -90,11 +92,23 @@ async function restore(v, kind) {
   await identity.adopt({ keys: body.keys, profile: body.profile })
   if (body.voice === 'f' || body.voice === 'm') db.saveSettings({ ...db.loadSettings(), voice: body.voice })
   remember({ kind, id: v.id, key: b64(v.key), at: new Date().toISOString() })
+  for (const other of Array.isArray(body.vaults) ? body.vaults : []) {
+    if (other?.kind && other.kind !== kind && /^[a-f0-9]{64}$/.test(other.id || '') && other.key) remember(other)
+  }
   try {
     localStorage.removeItem('cz.registered')
   } catch { /* ignore */ }
   await Y.refreshAll().catch(() => undefined)
   return body.profile
+}
+
+/** A new save: written with the full list, then the other saves are rewritten so they list it too. */
+async function saveNew(kind, v) {
+  const entry = { kind, id: v.id, key: b64(v.key), at: new Date().toISOString() }
+  const list = [...saved().filter((x) => x.kind !== kind), entry]
+  await upload(v, list)
+  remember(entry)
+  await refreshSaved()
 }
 
 // ---------- Passkey ----------
@@ -155,9 +169,7 @@ export async function savePasskey() {
       throw e
     }
   }
-  const v = await derive(secret)
-  await upload(v)
-  remember({ kind: 'passkey', id: v.id, key: b64(v.key), at: new Date().toISOString() })
+  await saveNew('passkey', await derive(secret))
 }
 
 export async function signInPasskey() {
@@ -195,9 +207,7 @@ export async function makeCode() {
     }
     val &= (1 << bits) - 1 // keep only the bits not used yet (stays far below 32 bits)
   }
-  const v = await derive(codeSecret(code))
-  await upload(v)
-  remember({ kind: 'code', id: v.id, key: b64(v.key), at: new Date().toISOString() })
+  await saveNew('code', await derive(codeSecret(code)))
   return formatCode(code)
 }
 
@@ -219,4 +229,5 @@ export async function remove(kind) {
   if (!v) return
   await Y.api('DELETE', `/v2/vault/${v.id}`).catch(() => undefined)
   forgetLocal(kind)
+  await refreshSaved() // the remaining saves stop listing it
 }
