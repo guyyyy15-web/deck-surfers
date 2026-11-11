@@ -6,20 +6,33 @@
 //   1  a job failed or was cancelled (prints the failing steps)
 //   2  a step ran longer than --stall minutes (likely stuck: investigate / cancel)
 //   3  the whole run took longer than --deadline minutes, or no run appeared
-// Uses the public GitHub API (no token), polling every 30 s to stay inside its rate limit.
-import { execSync } from 'node:child_process'
+// Uses the public GitHub API through curl (curl honours HTTPS_PROXY; Node's fetch does not), every 30 s.
+import { execSync, execFileSync } from 'node:child_process'
 
 const REPO = 'guyyyy15-web/deck-surfers'
 const args = Object.fromEntries(process.argv.slice(2).filter((a) => a.startsWith('--')).map((a) => a.slice(2).split('=')))
-const sha = process.argv.slice(2).find((a) => !a.startsWith('--')) || execSync('git rev-parse HEAD').toString().trim()
+// The API matches only full hashes, so resolve short ones (and default to HEAD).
+const sha = execSync(`git rev-parse ${process.argv.slice(2).find((a) => !a.startsWith('--')) || 'HEAD'}`).toString().trim()
 const STALL = Number(args.stall || 6) * 60e3
 const DEADLINE = Number(args.deadline || 25) * 60e3
 const API = `https://api.github.com/repos/${REPO}/actions`
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+// Transient network or API errors are retried; only a run that stays unreachable ends the watch.
+let failures = 0
 const get = async (url) => {
-  const r = await fetch(url, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ci-watch' } })
-  if (!r.ok) throw new Error(`${r.status} ${url}`)
-  return r.json()
+  for (;;) {
+    try {
+      const out = execFileSync('curl', ['-sS', '--fail-with-body', '--max-time', '20', '-H', 'Accept: application/vnd.github+json', '-H', 'User-Agent: ci-watch', url])
+      failures = 0
+      return JSON.parse(out.toString())
+    } catch (e) {
+      if (++failures >= 6) {
+        console.log(`GitHub API unreachable 6 times in a row: ${String(e.stdout || e.message).slice(0, 200)}`)
+        process.exit(3)
+      }
+      await wait(10e3)
+    }
+  }
 }
 const t0 = Date.now()
 const mins = (ms) => `${(ms / 60e3).toFixed(1)}m`
