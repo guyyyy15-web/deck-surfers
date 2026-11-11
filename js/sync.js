@@ -103,7 +103,7 @@ export const status = () => {
   return s ? { on: true, code: s.code, lastOk: s.lastOk || null, error: s.error || null, busy: running !== null } : { on: false }
 }
 
-function baseUrl() {
+export function baseUrl() {
   const local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && read('nk.syncUrl', null)
   return local || PROD_URL
 }

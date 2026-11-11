@@ -2,7 +2,7 @@
 // No server, no account. localStorage is used only for small settings.
 
 const DB_NAME = 'nekamot'
-const VERSION = 1
+const VERSION = 2 // 2: groups
 let dbp = null
 
 function open() {
@@ -12,6 +12,7 @@ function open() {
       const db = req.result
       if (!db.objectStoreNames.contains('revenges')) db.createObjectStore('revenges', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'id' })
+      if (!db.objectStoreNames.contains('groups')) db.createObjectStore('groups', { keyPath: 'id' })
     }
     req.onsuccess = () => {
       const db = req.result
@@ -48,9 +49,16 @@ export const putPhoto = (p) => tx('photos', 'readwrite', (s) => s.put(p))
 export const deletePhoto = (id) => tx('photos', 'readwrite', (s) => s.delete(id))
 export const allPhotos = () => tx('photos', 'readonly', (s) => s.getAll())
 
+// Groups: one record per group with its decrypted event log, keys and members (see js/groups.js).
+export const allGroups = () => tx('groups', 'readonly', (s) => s.getAll())
+export const getGroup = (id) => tx('groups', 'readonly', (s) => s.get(id))
+export const putGroup = (g) => tx('groups', 'readwrite', (s) => s.put(g))
+export const deleteGroup = (id) => tx('groups', 'readwrite', (s) => s.delete(id))
+
 export async function clearAll() {
   await tx('revenges', 'readwrite', (s) => s.clear())
   await tx('photos', 'readwrite', (s) => s.clear())
+  await tx('groups', 'readwrite', (s) => s.clear())
 }
 
 /** Ask the browser not to clear the data when the phone runs low on space. */

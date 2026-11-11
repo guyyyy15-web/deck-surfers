@@ -40,6 +40,14 @@ const check = (cond, msg) => {
 
     const context = await browser.newContext({ ...devices[DEVICE], locale: 'he-IL', timezoneId: 'Asia/Jerusalem', acceptDownloads: true })
     console.log(`device: ${DEVICE}`)
+    // Never talk to the production sync server from tests: point the app at a stub that has no groups.
+    const STUB = 'http://127.0.0.1:9'
+    await context.addInitScript((u) => localStorage.setItem('nk.syncUrl', JSON.stringify(u)), STUB)
+    await context.route(`${STUB}/**`, (route) => {
+      const url = route.request().url()
+      const body = url.endsWith('/v2/groups') ? { groups: [] } : { ok: true }
+      route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': '*' }, body: JSON.stringify(body) })
+    })
     const page = await context.newPage()
     const errors = []
     page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))

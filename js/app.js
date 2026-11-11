@@ -9,8 +9,9 @@ import { loadImage, toBlob, shrinkFile, photoUrl, rememberUrl, forgetUrl, blobTo
 import { IDEAS } from './ideas.js'
 import * as sync from './sync.js'
 import * as identity from './identity.js'
+import * as GU from './groups-ui.js'
 
-export const APP_VERSION = '1.3.0'
+export const APP_VERSION = '1.4.0'
 
 const S = {
   list: [],
@@ -144,9 +145,11 @@ function avatar(r, { size = 56, badge = 'type', lg = false } = {}) {
 /** Fills in <img data-photo> after a render. */
 function hydrate(root = document) {
   for (const img of root.querySelectorAll('img[data-photo]')) {
+    if (img.getAttribute('src')) continue
+    // A group photo may still be downloading: hide it for now and fill it in on the next hydrate.
     photoUrl(img.dataset.photo).then((u) => {
+      img.hidden = !u
       if (u) img.src = u
-      else img.remove()
     })
   }
 }
@@ -158,15 +161,18 @@ const backBtn = (href, label = 'חזרה', raised = false) =>
   `<a class="icon-btn${raised ? ' raised' : ''}" href="${href}" aria-label="${label}">${icon('arrow-right', raised ? 24 : 28)}</a>`
 
 function nav(active) {
+  const unread = GU.unreadTotal()
   const items = [
     ['stats', '#/stats', 'סטטיסטיקות', 'chart'],
     ['home', '#/', 'בית', 'home'],
-    ['ideas', '#/ideas', 'השראה לנקמה', 'bulb'],
+    ['groups', '#/groups', 'קבוצות', 'heart'],
+    ['ideas', '#/ideas', 'השראה', 'bulb'],
   ]
   return `<nav class="nk-nav" aria-label="ניווט">${items
     .map(([id, href, label, ic]) => {
       const on = id === active
-      return `<a class="nk-nav-item${on ? ' is-on' : ''}" href="${href}"${on ? ' aria-current="page"' : ''}>${icon(ic, 28, on ? 'lilac-300' : undefined)}<span>${label}</span></a>`
+      const dot = id === 'groups' && unread ? `<span class="nav-dot" aria-label="${unread} חדשים בקבוצות"></span>` : ''
+      return `<a class="nk-nav-item${on ? ' is-on' : ''}" href="${href}"${on ? ' aria-current="page"' : ''}>${icon(ic, 28, on ? 'lilac-300' : undefined)}${dot}<span>${label}</span></a>`
     })
     .join('')}</nav>`
 }
@@ -577,6 +583,7 @@ function detailsScreen(r) {
       </div>
       <div class="actions">
         <button type="button" class="nk-btn nk-btn-primary" data-act="complete"><span>${g('סמני כבוצעה', 'סמן כבוצעה')}</span>${icon('check', 22)}</button>
+        ${GU.hasGroups() ? `<button type="button" class="nk-btn nk-btn-quiet" data-act="to-group">${icon('heart', 20)}העברה לקבוצה</button>` : ''}
         <button type="button" class="nk-btn nk-btn-quiet danger" data-act="delete">מחיקת הנקמה</button></div>`,
   }
 }
@@ -1121,7 +1128,12 @@ function profileScreen() {
         sync.soon()
         confetti()
         buzz(40)
-        go('#/settings')
+        let after = null
+        try {
+          after = sessionStorage.getItem('nk.after')
+          sessionStorage.removeItem('nk.after')
+        } catch { /* ignore */ }
+        go(after || '#/settings')
         if (first && !sync.isOn()) {
           const ok = await confirmSheet({
             title: 'לשמור את החתול בענן?',
@@ -1358,6 +1370,13 @@ async function importBackup(file) {
 // ---------- Actions (event delegation) ----------
 
 app.addEventListener('click', async (e) => {
+  // Links that should come back here after creating your cat.
+  const after = e.target.closest('a[data-after]')
+  if (after) {
+    try {
+      sessionStorage.setItem('nk.after', after.dataset.after)
+    } catch { /* ignore */ }
+  }
   const el = e.target.closest('[data-act]')
   if (!el) return
   const act = el.dataset.act
@@ -1381,6 +1400,14 @@ app.addEventListener('click', async (e) => {
     const list = IDEAS.filter((i) => (S.ideaFilter === 'all' || i.type === S.ideaFilter) && i !== S.lucky)
     S.lucky = list[Math.floor(Math.random() * list.length)] || S.lucky
     render()
+  } else if (act === 'to-group' && r) {
+    GU.moveSheet(r, async () => {
+      S.list = S.list.filter((x) => x.id !== r.id)
+      await db.deleteRevenge(r.id)
+      sync.deleted(r.id, 'revenge')
+      dropPhoto(r.photoId)
+      dropPhoto(r.docPhotoId)
+    })
   } else if (act === 'install' && installPrompt) {
     const p = installPrompt
     installPrompt = null
@@ -1424,6 +1451,16 @@ function route() {
   if (parts[0] === 'settings') return { name: 'settings', query }
   if (parts[0] === 'pair') return { name: 'pair', code: parts[1] || '', query }
   if (parts[0] === 'me') return { name: 'me', query }
+  if (parts[0] === 'groups') return { name: parts[1] === 'new' ? 'group-new' : 'groups', query }
+  if (parts[0] === 'join') return { name: 'join', code: parts[1] || '', query }
+  if (parts[0] === 'g' && parts[1]) {
+    const gid = parts[1]
+    if (parts[2] === 'info') return { name: 'group-info', gid, query }
+    if (parts[2] === 'new') return { name: 'group-form', gid, query }
+    if (parts[2] === 'r' && parts[4] === 'edit') return { name: 'group-form', gid, rid: parts[3], query }
+    if (parts[2] === 'r') return { name: 'group-revenge', gid, rid: parts[3], query }
+    return { name: 'group', gid, query }
+  }
   return { name: 'missing', query }
 }
 
@@ -1432,6 +1469,7 @@ function render() {
   const rt = route()
   if (rt.name !== 'form') S.draft = null
   if (rt.name !== 'me') S.me = null
+  if (rt.name !== 'group-form') S.gdraft = null
   let scr
   if (rt.name === 'home') scr = homeScreen(rt.tab)
   else if (rt.name === 'details') scr = detailsScreen(byId(rt.id))
@@ -1441,6 +1479,7 @@ function render() {
   else if (rt.name === 'settings') scr = settingsScreen()
   else if (rt.name === 'pair') scr = pairScreen(rt.code)
   else if (rt.name === 'me') scr = profileScreen()
+  else if (['groups', 'group-new', 'join'].includes(rt.name) || rt.name.startsWith('group')) scr = GU.screen(rt) || notFound()
   else scr = notFound()
   const key = location.hash
   const changed = key !== lastKey
@@ -1453,6 +1492,28 @@ function render() {
   if (changed) window.scrollTo(0, 0)
   const h1 = app.querySelector('h1')
   document.title = h1 && h1.textContent !== 'נקמות שלי' ? `${h1.textContent} · נקמות שלי` : 'נקמות שלי'
+}
+
+/** Re-render after background data changes, without the enter animation, never under a form, sheet or dialog. */
+function softRender() {
+  if (['form', 'me', 'group-form', 'group-new'].includes(route().name)) return
+  if (document.querySelector('.sheet-wrap, [role="dialog"]')) return
+  const active = document.activeElement
+  if (active && /INPUT|TEXTAREA/.test(active.tagName) && active.value) return
+  lastKey = location.hash
+  const y = window.scrollY
+  render()
+  window.scrollTo(0, y)
+}
+
+async function getPhotoBlob(id) {
+  return (await db.getPhoto(id).catch(() => null))?.blob || null
+}
+
+/** What groups-ui.js needs from here. */
+function groupsCtx() {
+  return { icon, cat, esc, g, topbar, backBtn, sheet, confirmSheet, toast, confetti, buzz, hydrate, cropFace, go, S, typeOf, TYPES,
+    dayMonth, ago, copy, field, docPicker, initialOf, colorFor, meBadge, softRender, route, getPhotoBlob }
 }
 
 // ---------- Theme ----------
@@ -1479,16 +1540,15 @@ async function start() {
     S.list = []
     toast('לא הצלחתי לפתוח את המאגר בטלפון. מצב גלישה פרטית?')
   }
+  await GU.init(groupsCtx()).catch(() => undefined)
   window.addEventListener('hashchange', render)
   render()
   sync.onRemoteChange(async () => {
     S.list = await db.allRevenges()
-    // Don't pull the rug from under a form, a sheet or the photo cropper.
-    if (route().name !== 'form' && !document.querySelector('.sheet-wrap, [role="dialog"]')) {
-      lastKey = location.hash
-      render()
-    }
+    softRender()
   })
+  GU.poll(null, true)
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && GU.poll(route().gid || null, true))
   sync.soon(400)
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && sync.soon(300))
   window.addEventListener('online', () => sync.soon(300))

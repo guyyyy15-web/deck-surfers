@@ -21,6 +21,7 @@ index.html manifest.webmanifest sw.js   app shell (no build step)
 css/app.css                             design tokens (light + dark) and components
 js/app.js     screens, router, sheets, crop          js/logic.js  pure logic (tested)
 js/sync.js    E2E-encrypted backup/sync client       js/db.js     IndexedDB + settings
+js/identity.js  your cat + device keys (ECDSA/ECDH)  js/groups.js js/groups-ui.js  groups (data / screens)
 js/images.js js/icons.js js/ideas.js
 server/       Cloudflare Worker + D1 migrations + API tests (wrangler dev)
 tests/        node --test unit tests                 scripts/     serve, smoke, sync-smoke, icons
@@ -35,6 +36,8 @@ docs/         README screenshots, feature specs      game/        Deck Surfers (
   right value). Never add `'unsafe-inline'` to `script-src`.
 - **Database changes** go in a new `server/migrations/NNNN_name.sql`, never by editing an applied one.
   Apply with `npm run deploy:server` (runs `wrangler d1 migrations apply --remote`, then deploys).
+- **Groups:** never trust event content for permissions; `fold()` checks the author (set by the server from
+  the signature) and current roles. Tests must never call the production server (stub or local Worker).
 - **Privacy:** the server must never receive plaintext user content. Everything user-written is encrypted
   in `js/sync.js` before upload. Never log request bodies in the Worker.
 - **Cost guard:** keep the Worker limits (photo 3 MB, 300 MB per space, 8 GB total, 10 new spaces per
@@ -51,6 +54,7 @@ npm test               # unit tests (fast; run before every commit)
 npm run test:server    # Worker API tests against wrangler dev (needs: cd server && npm ci)
 npm run smoke          # iPhone browser test, screenshots in screenshots/
 npm run smoke:sync     # 2–4 phones syncing through the local Worker
+npm run smoke:groups   # 3 phones in a group through the local Worker
 npm run test:all       # everything
 npm run deploy:server  # migrations + deploy the Worker (needs CLOUDFLARE_* env, see below)
 ```

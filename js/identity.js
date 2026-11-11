@@ -102,10 +102,11 @@ export async function newKeys() {
   return keys
 }
 
-/** Signs a request: what the server will check (method, path, time, body hash). */
+/** Signs a request: what the server will check (method, path, time, body hash). `body`: string or bytes. */
 export async function signRequest(keys, method, path, body = '') {
   const time = String(Date.now())
-  const bodyHash = hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body)))
+  const bytes = typeof body === 'string' ? new TextEncoder().encode(body) : body
+  const bodyHash = hex(await crypto.subtle.digest('SHA-256', bytes))
   const priv = await crypto.subtle.importKey('jwk', keys.signPriv, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign'])
   const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, priv, new TextEncoder().encode(`${method}\n${path}\n${time}\n${bodyHash}`))
   return { 'X-Member': keys.memberId, 'X-Time': time, 'X-Sig': btoa(String.fromCharCode(...new Uint8Array(sig))) }

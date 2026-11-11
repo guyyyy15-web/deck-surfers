@@ -154,3 +154,122 @@ test('the identity record (kind meta) syncs like any other record', async () => 
   const all = await (await get('/v1/changes?since=0', s)).json()
   assert.deepEqual(all.items.map((i) => [i.id, i.kind]), [['identity', 'meta']])
 })
+
+// ---------- Groups (/v2) ----------
+const { newKeys, signRequest } = await import('../../js/identity.js')
+
+async function phone() {
+  const keys = await newKeys()
+  const call = async (method, path, body, raw) => {
+    const payload = raw ?? (body === undefined ? '' : JSON.stringify(body))
+    const headers = { ...(await signRequest(keys, method, path, payload)), 'Content-Type': raw ? 'application/octet-stream' : 'application/json' }
+    const res = await fetch(BASE + path, { method, headers, body: method === 'GET' || method === 'DELETE' ? undefined : payload })
+    const data = res.headers.get('Content-Type')?.includes('json') ? await res.json() : Buffer.from(await res.arrayBuffer())
+    return { status: res.status, data }
+  }
+  const reg = await call('POST', '/v2/identity', { signPub: keys.signPub, dhPub: keys.dhPub })
+  assert.equal(reg.status, 200, JSON.stringify(reg.data))
+  return { keys, id: keys.memberId, call }
+}
+const gid = () => `g${randomBytes(9).toString('hex')}`
+const sha = (s) => createHash('sha256').update(s).digest('hex')
+
+test('groups: identity registration checks the key and the signature', async () => {
+  const k = await newKeys()
+  const body = JSON.stringify({ signPub: k.signPub, dhPub: k.dhPub })
+  const h = await signRequest(k, 'POST', '/v2/identity', body)
+  // Claiming someone else's id fails.
+  const wrongId = await fetch(`${BASE}/v2/identity`, { method: 'POST', headers: { ...h, 'X-Member': 'a'.repeat(24) }, body })
+  assert.equal(wrongId.status, 400)
+  // A tampered body fails the signature.
+  const tampered = await fetch(`${BASE}/v2/identity`, { method: 'POST', headers: h, body: body.replace('"kty"', '"kty" ') })
+  assert.equal(tampered.status, 401)
+  // Unsigned requests are refused everywhere.
+  assert.equal((await fetch(`${BASE}/v2/groups`)).status, 401)
+  // An old signature is refused.
+  const old = await signRequest(k, 'GET', '/v2/groups', '')
+  old['X-Time'] = String(Date.now() - 10 * 60e3)
+  assert.equal((await fetch(`${BASE}/v2/groups`, { headers: old })).status, 401)
+})
+
+test('groups: create, invite, peek, join, post and read events', async () => {
+  const a = await phone(), b = await phone(), c = await phone()
+  const g = gid()
+  assert.equal((await a.call('POST', '/v2/groups', { id: g, wrapped: 'WRAPPED-A-1' })).status, 201)
+  assert.equal((await a.call('POST', '/v2/groups', { id: g, wrapped: 'x' })).status, 409)
+  assert.equal((await a.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'META' }] })).data.seq, 1)
+  // Strangers can't read.
+  assert.equal((await b.call('GET', `/v2/groups/${g}/events?since=0`)).status, 403)
+  // Invite: the server gets only a hash of the auth value.
+  const auth = randomBytes(32).toString('hex')
+  const inv = `i${randomBytes(9).toString('hex')}`
+  assert.equal((await a.call('POST', `/v2/groups/${g}/invites`, { id: inv, authHash: sha(auth), wrappedKeys: [{ version: 1, wrapped: 'INV-1' }], maxUses: 2 })).status, 201)
+  // Peek with a wrong auth: nothing.
+  assert.equal((await fetch(`${BASE}/v2/invites/${inv}/peek`, { method: 'POST', body: JSON.stringify({ auth: 'f'.repeat(64) }) })).status, 404)
+  const peek = await (await fetch(`${BASE}/v2/invites/${inv}/peek`, { method: 'POST', body: JSON.stringify({ auth }) })).json()
+  assert.deepEqual([peek.groupId, peek.members, peek.wrappedKeys[0].wrapped, peek.events.length], [g, 1, 'INV-1', 1])
+  // Join.
+  const join = await b.call('POST', `/v2/invites/${inv}/accept`, { auth, wrappedForMe: [{ version: 1, wrapped: 'WRAPPED-B-1' }] })
+  assert.equal(join.status, 200)
+  const info = (await b.call('GET', `/v2/groups/${g}`)).data
+  assert.deepEqual(info.members.map((x) => [x.id, x.role]), [[a.id, 'admin'], [b.id, 'member']])
+  assert.deepEqual(info.keys, [{ version: 1, wrapped: 'WRAPPED-B-1' }])
+  assert.ok(info.members.every((x) => x.dhPub.kty === 'EC' && !x.dhPub.d))
+  await b.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'B1' }, { keyVersion: 1, data: 'B2' }] })
+  const evs = (await a.call('GET', `/v2/groups/${g}/events?since=1`)).data.events
+  assert.deepEqual(evs.map((e) => [e.seq, e.author_id, e.data]), [[2, b.id, 'B1'], [3, b.id, 'B2']])
+  // The invite has two uses; the third person may join, a fourth may not.
+  assert.equal((await c.call('POST', `/v2/invites/${inv}/accept`, { auth, wrappedForMe: [{ version: 1, wrapped: 'C' }] })).status, 200)
+  const d = await phone()
+  assert.equal((await d.call('POST', `/v2/invites/${inv}/accept`, { auth, wrappedForMe: [] })).status, 410)
+  // My groups.
+  assert.deepEqual((await c.call('GET', '/v2/groups')).data.groups.map((x) => x.id), [g])
+})
+
+test('groups: removal locks the member out and asks for a new key', async () => {
+  const a = await phone(), b = await phone(), c = await phone()
+  const g = gid()
+  await a.call('POST', '/v2/groups', { id: g, wrapped: 'A1' })
+  const auth = randomBytes(32).toString('hex'), inv = `i${randomBytes(9).toString('hex')}`
+  await a.call('POST', `/v2/groups/${g}/invites`, { id: inv, authHash: sha(auth), wrappedKeys: [] })
+  for (const x of [b, c]) await x.call('POST', `/v2/invites/${inv}/accept`, { auth, wrappedForMe: [{ version: 1, wrapped: 'K' }] })
+  // A member can't remove others; an admin can.
+  assert.equal((await b.call('DELETE', `/v2/groups/${g}/members/${c.id}`)).status, 403)
+  assert.equal((await a.call('DELETE', `/v2/groups/${g}/members/${c.id}`)).status, 200)
+  assert.equal((await c.call('GET', `/v2/groups/${g}/events?since=0`)).status, 403)
+  const info = (await b.call('GET', `/v2/groups/${g}`)).data
+  assert.equal(info.needsRotation, true)
+  // Rotation must cover every current member, and only the next version is accepted.
+  assert.equal((await b.call('POST', `/v2/groups/${g}/keys`, { version: 2, wrapped: [{ memberId: a.id, wrapped: 'A2' }] })).status, 400)
+  assert.equal((await b.call('POST', `/v2/groups/${g}/keys`, { version: 3, wrapped: [] })).status, 409)
+  assert.equal((await b.call('POST', `/v2/groups/${g}/keys`, { version: 2, wrapped: [{ memberId: a.id, wrapped: 'A2' }, { memberId: b.id, wrapped: 'B2' }] })).status, 200)
+  const after = (await a.call('GET', `/v2/groups/${g}`)).data
+  assert.deepEqual([after.keyVersion, after.needsRotation, after.keys.map((k) => k.wrapped)], [2, false, ['A1', 'A2']])
+  // Events can't claim a key version that doesn't exist yet.
+  assert.equal((await a.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 3, data: 'x' }] })).status, 400)
+  // The last admin leaving hands admin to the longest-standing member; the last member leaving deletes the group.
+  await a.call('DELETE', `/v2/groups/${g}/members/${a.id}`)
+  assert.equal((await b.call('GET', `/v2/groups/${g}`)).data.role, 'admin')
+  assert.equal((await b.call('DELETE', `/v2/groups/${g}/members/${b.id}`)).data.deleted, true)
+})
+
+test('groups: encrypted photos for members only; group limit of 20', async () => {
+  const a = await phone(), stranger = await phone()
+  const g = gid()
+  await a.call('POST', '/v2/groups', { id: g, wrapped: 'A1' })
+  const bytes = randomBytes(3000)
+  assert.equal((await a.call('PUT', `/v2/groups/${g}/photos/ph0001`, undefined, bytes)).status, 201)
+  const back = await a.call('GET', `/v2/groups/${g}/photos/ph0001`)
+  assert.ok(back.data.equals(bytes))
+  assert.equal((await stranger.call('GET', `/v2/groups/${g}/photos/ph0001`)).status, 403)
+  // Fill the group to 20 and the 21st is refused.
+  const auth = randomBytes(32).toString('hex'), inv = `i${randomBytes(9).toString('hex')}`
+  await a.call('POST', `/v2/groups/${g}/invites`, { id: inv, authHash: sha(auth), wrappedKeys: [], maxUses: 20 })
+  for (let i = 0; i < 19; i++) assert.equal((await (await phone()).call('POST', `/v2/invites/${inv}/accept`, { auth, wrappedForMe: [] })).status, 200)
+  const auth2 = randomBytes(32).toString('hex'), inv2 = `i${randomBytes(9).toString('hex')}`
+  await a.call('POST', `/v2/groups/${g}/invites`, { id: inv2, authHash: sha(auth2), wrappedKeys: [] })
+  assert.equal((await (await phone()).call('POST', `/v2/invites/${inv2}/accept`, { auth: auth2, wrappedForMe: [] })).status, 409)
+  // Deleting the group removes its photos.
+  assert.equal((await a.call('DELETE', `/v2/groups/${g}`)).status, 200)
+  assert.equal((await a.call('GET', `/v2/groups/${g}/photos/ph0001`)).status, 403)
+})

@@ -1,10 +1,12 @@
+import { groupsRoute } from './groups.js'
+
 // נקמות שלי sync server: a Cloudflare Worker with D1 (records) and R2 (photos).
 // Everything it stores is encrypted by the phone; it cannot read names, reasons or photos.
 //
 // Auth: each request carries X-Space (space id) and Authorization: Bearer <token>. Both are derived
 // on the phone from the sync code; the server keeps only SHA-256(token).
 
-const LIMITS = {
+export const LIMITS = {
   itemsPerPush: 200,
   itemBytes: 64 * 1024, // one encrypted revenge record
   itemsPerSpace: 5000,
@@ -46,13 +48,13 @@ export default {
   },
 }
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(status, message) {
     super(message)
     this.status = status
   }
 }
-const fail = (status, message) => {
+export const fail = (status, message) => {
   throw new HttpError(status, message)
 }
 
@@ -64,23 +66,23 @@ function corsHeaders(req, env) {
     ? {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Space',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Space, X-Member, X-Time, X-Sig',
         'Access-Control-Max-Age': '86400',
         Vary: 'Origin',
       }
     : { Vary: 'Origin' }
 }
 
-const json = (body, status = 200, headers = {}) =>
+export const json = (body, status = 200, headers = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } })
 
-async function sha256hex(s) {
+export async function sha256hex(s) {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 /** Constant-time string comparison. */
-function same(a, b) {
+export function same(a, b) {
   if (a.length !== b.length) return false
   let x = 0
   for (let i = 0; i < a.length; i++) x |= a.charCodeAt(i) ^ b.charCodeAt(i)
@@ -96,7 +98,7 @@ async function authed(req, env) {
   return row
 }
 
-async function readJson(req, max) {
+export async function readJson(req, max) {
   const len = Number(req.headers.get('Content-Length') || 0)
   if (len > max) fail(413, 'too large')
   const text = await req.text()
@@ -113,6 +115,7 @@ async function route(req, env) {
   const p = url.pathname
 
   if (p === '/' || p === '/v1/health') return json({ ok: true, service: 'nekamot-sync' })
+  if (p.startsWith('/v2/')) return groupsRoute(req, env, url)
 
   // Create a space. The phone generates the id and token from a fresh sync code.
   if (p === '/v1/spaces' && req.method === 'POST') {
@@ -198,7 +201,7 @@ async function route(req, env) {
     const had = await env.PHOTOS.head(key)
     if (had) return json({ ok: true, existed: true })
     if (sp.bytes + body.byteLength > LIMITS.spaceBytes) fail(507, 'space full')
-    const total = await env.DB.prepare('SELECT COALESCE(SUM(bytes), 0) AS b FROM spaces').first('b')
+    const total = await totalBytes(env)
     if (total + body.byteLength > LIMITS.totalBytes) fail(507, 'storage full')
     await env.PHOTOS.put(key, body, { httpMetadata: { contentType: 'application/octet-stream' } })
     await env.DB.prepare('UPDATE spaces SET bytes = bytes + ? WHERE id = ?').bind(body.byteLength, sp.id).run()
@@ -215,7 +218,7 @@ async function route(req, env) {
 }
 
 /** At most `max` actions of this kind per client per hour. Clients are hashed IPs, rotated daily. */
-async function limit(env, req, kind, max) {
+export async function limit(env, req, kind, max) {
   const ip = req.headers.get('CF-Connecting-IP') || 'local'
   const hour = Math.floor(Date.now() / 3600000)
   const day = Math.floor(hour / 24)
@@ -235,4 +238,11 @@ async function dropPhoto(env, space, id) {
   if (!obj) return
   await env.PHOTOS.delete(key)
   await env.DB.prepare('UPDATE spaces SET bytes = MAX(0, bytes - ?) WHERE id = ?').bind(obj.size, space).run()
+}
+
+/** Photo bytes stored in R2 by backups and groups together. */
+export async function totalBytes(env) {
+  const a = await env.DB.prepare('SELECT COALESCE(SUM(bytes), 0) AS b FROM spaces').first('b')
+  const b = await env.DB.prepare('SELECT COALESCE(SUM(bytes), 0) AS b FROM groups').first('b')
+  return a + b
 }
