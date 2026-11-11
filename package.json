@@ -10,7 +10,7 @@
     "test:server": "cd server && npm test",
     "smoke": "node scripts/smoke.cjs && DEVICE=\"Pixel 7\" node scripts/smoke.cjs",
     "smoke:sync": "node scripts/sync-smoke.cjs",
-    "test:all": "npm test && npm run test:server && npm run smoke && npm run smoke:sync && npm run smoke:groups",
+    "test:all": "node scripts/test-all.cjs",
     "icons": "node scripts/icons.cjs",
     "deploy:server": "cd server && npm run db:migrate && npm run deploy",
     "smoke:groups": "node scripts/groups-smoke.cjs",

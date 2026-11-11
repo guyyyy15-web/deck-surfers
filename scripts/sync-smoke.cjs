@@ -45,8 +45,12 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await maker.close()
     const img = (name, buffer) => ({ name, mimeType: 'image/png', buffer })
 
-    const phone = async (name) => {
+    // installed: opened from the home-screen icon (iOS sets navigator.standalone). Links in plain Safari get
+    // a handoff screen instead (iPhone Safari and the home-screen app don't share storage).
+    const phone = async (name, { installed = true } = {}) => {
       const ctx = await browser.newContext({ ...devices['iPhone 15'], locale: 'he-IL' })
+      await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(APP).origin })
+      if (installed) await ctx.addInitScript(() => Object.defineProperty(navigator, 'standalone', { value: true }))
       await ctx.addInitScript((url) => localStorage.setItem('nk.syncUrl', JSON.stringify(url)), API)
       const page = await ctx.newPage()
       page.errors = []
@@ -99,6 +103,15 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     check(!dump.includes('רונית') && !dump.includes('מייל') && !dump.includes('הקונוסים'), 'server: names, reasons and nickname are encrypted')
 
     // Phone B opens the pairing link.
+    // In plain Safari the pairing link offers to copy the code for the app.
+    const S = await phone('S', { installed: false })
+    await S.page.goto(`${APP}#/pair/${code.replace(/-/g, '')}`)
+    await S.page.waitForSelector('#splash', { state: 'detached' })
+    await S.page.click('[data-copy-pair]')
+    await S.page.waitForSelector('.toast:has-text("הועתק")')
+    check((await S.page.evaluate(() => navigator.clipboard.readText())) === code, 'iPhone Safari: pairing link copies the code for the app')
+    await S.ctx.close()
+
     const B = await phone('B')
     await ready(B.page, `${APP}#/pair/${code.replace(/-/g, '')}`)
     check((await B.page.textContent('h2')).includes('לחבר'), 'B: pairing link asks to connect')

@@ -62,7 +62,7 @@ npm run smoke          # iPhone browser test, screenshots in screenshots/
 npm run smoke:sync     # 2–4 phones syncing through the local Worker
 npm run smoke:upgrade  # existing users: live version → working copy, data kept, update toast
 npm run smoke:groups   # 3 phones in a group through the local Worker, incl. push end to end (full headless Chromium)
-npm run test:all       # everything
+npm run test:all       # everything, one labelled ✅/❌ line per suite (read every line before releasing)
 npm run deploy:server  # migrations + deploy the Worker (needs CLOUDFLARE_* env, see below)
 ```
 
