@@ -3,10 +3,11 @@ import * as Y from './yard.js'
 import * as identity from './identity.js'
 import * as db from './db.js'
 import * as push from './push.js'
+import * as V from './vault.js'
 import { duck, DUCK_COLORS, ACCESSORIES } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.1.0'
+export const APP_VERSION = '0.2.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -278,7 +279,8 @@ function welcome() {
     ${demoParade()}
     <form class="panel" id="f" novalidate>${duckForm({}, { compact: true })}<p class="err" id="err" role="alert"></p>
       <button class="btn btn-primary btn-wide" type="submit">יאללה, לחצר! 🦆</button></form>
-    <button type="button" class="link-btn" id="paste">${push.isIOS() && push.standalone() ? 'כבר הצטרפתי בספארי / יש לי קישור' : 'יש לי קישור הזמנה'}</button>
+    <button type="button" class="link-btn" id="signin" style="font-weight:700">כבר יש לי ברווזון</button>
+    <button type="button" class="link-btn" id="paste">יש לי קישור הזמנה</button>
     <p class="fine">בלי הרשמה, בלי מספר טלפון. הכל מוצפן בטלפון שלך.</p>
   </main>`
   const read = bindDuckForm($app)
@@ -294,6 +296,137 @@ function welcome() {
     })
   }
   $app.querySelector('#paste').onclick = pasteSheet
+  $app.querySelector('#signin').onclick = () => signInSheet()
+}
+
+/** "כבר יש לי ברווזון": Face ID / fingerprint, or a save code. `after`: what to show once signed in. */
+function signInSheet(after = null) {
+  const pk = V.passkeysAvailable()
+  openSheet(`<h2>כבר יש לי ברווזון 🐥</h2>
+    <p class="lead">נכנסים בנגיעה, וכל החצרות חוזרות. בלי סיסמה ובלי מספר טלפון.</p>
+    <div class="stack">
+      ${pk ? `<button class="btn btn-primary" id="pk" type="button">כניסה עם ${V.passkeyName()}</button>` : ''}
+    </div>
+    <form id="signf" novalidate>
+      <label class="lbl" for="scode">קוד שמירה</label>
+      <input class="input" id="scode" dir="ltr" style="text-align:center;letter-spacing:1px" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX">
+      <p class="err" id="err" role="alert"></p>
+      <button class="btn btn-soft btn-wide" type="submit">כניסה עם קוד</button>
+    </form>
+    <div class="stack"><button class="link-btn" id="link" type="button">יש לי רק קישור הזמנה</button></div>
+    <p class="fine">אין ${pk ? `${V.passkeyName()} שמור ואין ` : ''}קוד? אפשר להתחיל ברווזון חדש ולבקש קישור מחדש.</p>`, (root) => {
+    const errEl = root.querySelector('#err')
+    const done = async (profile) => {
+      toast(`${g('ברוכה השבה', 'ברוך השב')}, ${profile.nickname} 🐥`)
+      await closeSheet()
+      if (after) after()
+      else {
+        location.hash = '#/'
+        await render()
+      }
+    }
+    const guard = async () => {
+      const cur = identity.load()
+      if (cur?.keys && (await Y.localYards()).length) return confirm('להחליף את הברווזון שבטלפון הזה בברווזון השמור?')
+      return true
+    }
+    root.querySelector('#pk')?.addEventListener('click', async (e) => {
+      if (!(await guard())) return
+      const btn = e.currentTarget
+      busy(btn, true, 'רגע…')
+      errEl.textContent = ''
+      try {
+        await done(await V.signInPasskey())
+      } catch (x) {
+        if (x.code !== 'cancelled') errEl.textContent = errText(x)
+      } finally {
+        busy(btn, false)
+      }
+    })
+    root.querySelector('#signf').onsubmit = async (e) => {
+      e.preventDefault()
+      if (!(await guard())) return
+      const btn = e.currentTarget.querySelector('[type="submit"]')
+      busy(btn, true, 'בודקת…')
+      errEl.textContent = ''
+      try {
+        await done(await V.signInCode(root.querySelector('#scode').value))
+      } catch (x) {
+        errEl.textContent = errText(x)
+      } finally {
+        busy(btn, false)
+      }
+    }
+    root.querySelector('#link').onclick = pasteSheet
+  })
+}
+
+/** Saving the duckling: the card on "הברווזון שלי". */
+function saveCard() {
+  const list = V.saved()
+  const pk = list.find((v) => v.kind === 'passkey')
+  const code = list.find((v) => v.kind === 'code')
+  const can = V.passkeysAvailable()
+  const day = (iso) => new Intl.DateTimeFormat('he-IL', { day: 'numeric', month: 'long' }).format(new Date(iso))
+  if (!list.length) {
+    return `<section class="turn-card" aria-label="שמירת הברווזון">
+      <span class="big" style="font-size:22px;line-height:28px">שמירת הברווזון</span>
+      <span class="note" style="font-size:15px;line-height:21px">אם הטלפון מתחלף או נמחק, נכנסים בנגיעה וכל החצרות חוזרות.${push.isIOS() && !push.standalone() ? ' כדאי גם לפני שמוסיפים למסך הבית.' : ''}</span>
+      <div class="actions" style="flex-direction:column">
+        ${can ? `<button class="done-btn" id="save-pk" type="button">שמירה עם ${V.passkeyName()}</button>` : ''}
+        <button class="pass-btn" id="save-code" type="button">${can ? 'או קוד שמירה במקום' : 'קוד שמירה'}</button>
+      </div></section>`
+  }
+  return `<section aria-label="שמירת הברווזון" style="margin-top:16px;display:flex;flex-direction:column;gap:10px">
+    ${pk ? `<div class="row" style="background:var(--green-soft)"><span class="what" style="padding:0"><span class="t">${V.passkeyName()} ✓</span><span class="s">נשמר ב־${day(pk.at)}. אפשר להיכנס בנגיעה מכל מכשיר שלך.</span></span><button class="link-btn" data-unsave="passkey" type="button">הסרה</button></div>` : can ? `<button class="btn btn-soft" id="save-pk" type="button">גם שמירה עם ${V.passkeyName()}</button>` : ''}
+    ${code ? `<div class="row" style="background:var(--green-soft)"><span class="what" style="padding:0"><span class="t">קוד שמירה ✓</span><span class="s">נוצר ב־${day(code.at)}. הקוד עצמו לא נשמר כאן.</span></span><button class="link-btn" data-unsave="code" type="button">הסרה</button></div>` : '<button class="btn btn-ghost" id="save-code" type="button">גם קוד שמירה (גיבוי)</button>'}
+  </section>`
+}
+function bindSaveCard(root, rerender) {
+  root.querySelector('#save-pk')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget
+    busy(btn, true, 'רגע…')
+    try {
+      await V.savePasskey()
+      toast(`הברווזון שמור עם ${V.passkeyName()} 🐥`)
+      rerender()
+    } catch (x) {
+      if (x.code !== 'cancelled') toast(errText(x))
+      busy(btn, false)
+    }
+  })
+  root.querySelector('#save-code')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget
+    busy(btn, true, 'רגע…')
+    const code = await act(() => V.makeCode())
+    busy(btn, false)
+    if (code) codeSheet(code, rerender)
+  })
+  root.querySelectorAll('[data-unsave]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('להסיר את השמירה הזאת? אפשר לשמור שוב בכל רגע.')) return
+    await V.remove(b.dataset.unsave)
+    rerender()
+  }))
+}
+function codeSheet(code, after) {
+  openSheet(`<h2>קוד השמירה שלך</h2>
+    <div class="invite-box" style="font-size:22px;letter-spacing:1px;text-align:center;font-family:var(--font-display);font-weight:600;color:var(--ink);white-space:nowrap;overflow-wrap:normal">${esc(code)}</div>
+    <div class="stack"><button class="btn btn-soft" id="copy" type="button">העתקת הקוד</button></div>
+    <p class="lead">${g('שמרי', 'שמור')} אותו בפתקים או במנהל הסיסמאות. מי שיש לו את הקוד נכנס בתור הברווזון שלך, אז לא שולחים אותו בצ׳אט. הוא לא יוצג שוב.</p>
+    <div class="stack"><button class="btn btn-primary" id="ok" type="button">${g('שמרתי', 'שמרתי')}</button></div>`, (root) => {
+    root.querySelector('#copy').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(code)
+        toast('הקוד הועתק')
+      } catch {
+        toast('לא הצלחתי להעתיק. אפשר לצלם מסך')
+      }
+    }
+    root.querySelector('#ok').onclick = async () => {
+      await closeSheet()
+      after?.()
+    }
+  })
 }
 
 // ---------- Home: my yards ----------
@@ -326,7 +459,8 @@ async function homeScreen() {
   const waiting = cards.reduce((n, c) => n + c.alert, 0)
   push.setBadge(recs.reduce((n, r) => n + Y.unread(r, myId), 0))
   const p = identity.profile()
-  const showInstall = !push.standalone() && !settings.hideInstall && recs.length > 0
+  const showSave = recs.length > 0 && !V.saved().length && !settings.hideSave
+  const showInstall = !showSave && !push.standalone() && !settings.hideInstall && recs.length > 0
   $app.innerHTML = `<main class="screen">
     ${navigator.onLine ? '' : '<div class="offline">אין רשת כרגע. מה שתעשי יישלח כשתחזרי</div>'}
     <header class="top"><h1>החצרות שלי</h1><a class="me-btn" href="#/me" aria-label="הברווזון שלי">${duck(p, 48)}</a></header>
@@ -337,6 +471,7 @@ async function homeScreen() {
       <button class="btn btn-soft" id="new" type="button">${ICON.plus} חצר חדשה</button>
       <button class="link-btn" id="paste" type="button">יש לי קישור הזמנה</button>
     </div>
+    ${showSave ? `<div class="nudge" style="margin-top:22px"><span style="flex:1"><b>${g('שמרי', 'שמור')} את הברווזון</b>, כדי לא לאבד את החצרות אם הטלפון מתחלף.</span><a class="pill soft" href="#/me" style="display:inline-flex;align-items:center;text-decoration:none">${g('לשמירה', 'לשמירה')}</a></div>` : ''}
     ${showInstall ? `<div class="nudge" style="margin-top:22px"><span style="flex:1">רוצה לדעת כשתורך? ${g('הוסיפי', 'הוסף')} את החצר למסך הבית.</span><button class="pill soft" id="install" type="button">איך?</button></div>` : ''}
   </main>`
   $app.querySelector('#new').onclick = newYardSheet
@@ -480,12 +615,13 @@ async function joinScreen(code) {
     <p class="lead">${lead}</p>
     ${parade(ducks)}
     <form class="panel" id="f" novalidate>
-      ${p ? `<div class="member">${duck(p, 48)}<span class="n">${g('תיכנסי', 'תיכנס')} בתור <b>${esc(p.nickname)}</b></span><a class="link-btn" href="#/me">שינוי</a></div>` : duckForm({}, { compact: true })}
+      ${p ? `<div class="member">${duck(p, 48)}<span class="n">${g('תיכנסי', 'תיכנס')} בתור <b>${esc(p.nickname)}</b></span><a class="link-btn" href="#/me">שינוי</a></div>` : `${duckForm({}, { compact: true })}<button class="link-btn" type="button" id="signin" style="margin-top:6px">כבר יש לי ברווזון? כניסה</button>`}
       ${peek.full ? '<p class="err">החצר מלאה (20 ברווזונים). אי אפשר להצטרף כרגע.</p>' : '<p class="err" id="err" role="alert"></p>'}
       <button class="btn btn-primary btn-wide" type="submit" ${peek.full ? 'disabled' : ''}>אני בחצר! 🦆</button>
     </form>
     <p class="fine">בלי הרשמה ובלי להתקין. אפשר להוסיף למסך הבית אחר כך, בשביל התראות.</p>`)
   const read = p ? null : bindDuckForm($app)
+  $app.querySelector('#signin')?.addEventListener('click', () => signInSheet(() => joinScreen(code)))
   $app.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault()
     if (read) {
@@ -1116,14 +1252,14 @@ async function editYardSheet(id) {
 function pasteSheet() {
   openSheet(`<h2>יש לי קישור</h2>
     <p class="lead">${g('הדביקי', 'הדבק')} כאן קישור הזמנה לחצר${push.isIOS() && push.standalone() ? ', או את קוד ההעברה מספארי' : ''}.</p>
-    <form id="f" novalidate>
+    <form id="pastef" novalidate>
       <label class="sr" for="code">קישור</label>
       <textarea class="input" id="code" rows="3" placeholder="https://hechatzer.pages.dev/#/join/…"></textarea>
       ${navigator.clipboard?.readText ? '<button class="link-btn" type="button" id="clip">הדבקה מהלוח</button>' : ''}
       <p class="err" id="err" role="alert"></p>
       <button class="btn btn-primary btn-wide" type="submit">המשך</button>
     </form>`, (root) => {
-    const f = root.querySelector('#f')
+    const f = root.querySelector('#pastef')
     const ta = f.querySelector('#code')
     root.querySelector('#clip')?.addEventListener('click', async () => {
       try {
@@ -1160,15 +1296,27 @@ function installSheet() {
     <p class="lead">ככה מקבלים התראות כשתורך או כשמוסיפים משהו, ופותחים בלחיצה.</p>
     ${ios ? `
       <ol style="padding-inline-start:20px;line-height:1.8;margin:14px 0 0">
-        <li><b>קודם, ${g('העתיקי', 'העתק')} את הברווזון שלך:</b> באייפון, האפליקציה שעל מסך הבית לא רואה את מה שבספארי.</li>
+        <li><b>קודם, ${g('שמרי', 'שמור')} את הברווזון</b>, כי האפליקציה שעל מסך הבית לא רואה את מה שבספארי.</li>
         <li>לוחצים על כפתור השיתוף <span aria-hidden="true">⬆️</span> בתחתית ספארי.</li>
         <li>"הוספה למסך הבית", ואז "הוספה".</li>
-        <li>פותחים את החצר מהאייקון, לוחצים "כבר הצטרפתי בספארי" ומדביקים.</li>
+        <li>פותחים מהאייקון ובוחרים "כבר יש לי ברווזון".</li>
       </ol>
-      <div class="stack"><button class="btn btn-primary" id="copy" type="button">העתקת הברווזון שלי</button></div>
-      <p class="fine">הקוד הזה הוא המפתח שלך לחצרות. אל ${g('תשלחי', 'תשלח')} אותו לאף אחד.</p>`
+      <div class="stack">${V.saved().some((v) => v.kind === 'passkey') ? `<p class="lead">✓ הברווזון שמור עם ${V.passkeyName()}. אפשר להמשיך לשלב 2.</p>` : V.passkeysAvailable() ? `<button class="btn btn-primary" id="savepk" type="button">שמירה עם ${V.passkeyName()}</button>` : ''}
+        <button class="link-btn" id="copy" type="button">אין ${V.passkeyName()}? העתקת קוד העברה במקום</button></div>
+      <p class="fine">קוד ההעברה הוא המפתח שלך לחצרות. אל ${g('תשלחי', 'תשלח')} אותו לאף אחד.</p>`
       : `<p class="lead" style="margin-top:12px">בכרום: תפריט ⋮ ← "התקנת אפליקציה" או "הוספה למסך הבית".</p>${deferredInstall ? '<div class="stack"><button class="btn btn-primary" id="inst" type="button">התקנה</button></div>' : ''}`}
     <div class="stack"><button class="link-btn" id="hide" type="button">לא עכשיו</button></div>`, (root) => {
+    root.querySelector('#savepk')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget
+      busy(btn, true, 'רגע…')
+      try {
+        await V.savePasskey()
+        btn.outerHTML = `<p class="lead">✓ הברווזון שמור עם ${V.passkeyName()}. עכשיו לשלב 2.</p>`
+      } catch (x) {
+        if (x.code !== 'cancelled') toast(errText(x))
+        busy(btn, false)
+      }
+    })
     root.querySelector('#copy')?.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(identity.moveCode())
@@ -1231,6 +1379,7 @@ function meScreen() {
   $app.innerHTML = `<main class="screen">
     <header class="top"><a class="icon-btn" href="#/" aria-label="חזרה">${ICON.back}</a><h1>הברווזון שלי</h1></header>
     <div style="display:flex;justify-content:center;margin-top:8px" id="preview">${duck(p, 120)}</div>
+    <div id="save">${saveCard()}</div>
     <form id="f" novalidate>${duckForm(p)}<p class="err" id="err" role="alert"></p>
       <button class="btn btn-primary btn-wide" type="submit">שמירה</button></form>
     <h2 class="section">התראות</h2>${pushRow}
@@ -1249,8 +1398,14 @@ function meScreen() {
       await identity.saveProfile(v)
       toast('נשמר 🐥')
       Y.refreshAll().catch(() => undefined) // tells the yards about the new look
+      V.refreshSaved() // and the saved copy
     })
   }
+  const bindSave = () => bindSaveCard($app.querySelector('#save'), () => {
+    $app.querySelector('#save').innerHTML = saveCard()
+    bindSave()
+  })
+  bindSave()
   $app.querySelector('#install')?.addEventListener('click', installSheet)
   $app.querySelector('#paste').onclick = pasteSheet
   $app.querySelector('#pushon')?.addEventListener('click', () => act(async () => {

@@ -9,6 +9,9 @@ import { sendPush, allowedEndpoint, unb64u } from './webpush.js'
 
 const G = {
   maxMembers: 20,
+  vaultBytes: 8192,
+  vaultsPerMember: 4,
+  vaultReadsPerHour: 30,
   eventBytes: 32 * 1024,
   eventsPerPost: 50,
   groupBytes: 300 * 1024 * 1024,
@@ -89,6 +92,37 @@ export async function groupsRoute(req, env, url, ctx) {
   if (p === '/v2/push/key' && m === 'GET') {
     if (!env.VAPID_PUBLIC) fail(503, 'push not configured')
     return json({ key: env.VAPID_PUBLIC })
+  }
+
+  // Saved ducklings (vaults). The id is a hash only the passkey or save-code holder can compute.
+  const vm = /^\/v2\/vault\/([a-f0-9]{64})$/.exec(p)
+  if (vm) {
+    if (m === 'GET') {
+      await limit(env, req, 'vault', G.vaultReadsPerHour)
+      const row = await env.DB.prepare('SELECT data, updated_at FROM vaults WHERE id = ?').bind(vm[1]).first()
+      if (!row) fail(404, 'no such vault')
+      return json({ data: row.data, updatedAt: row.updated_at })
+    }
+    const me = await caller(req, env, path, bytes)
+    const row = await env.DB.prepare('SELECT member_id FROM vaults WHERE id = ?').bind(vm[1]).first()
+    if (row && row.member_id !== me) fail(409, 'taken')
+    if (m === 'DELETE') {
+      await env.DB.prepare('DELETE FROM vaults WHERE id = ? AND member_id = ?').bind(vm[1], me).run()
+      return json({ ok: true })
+    }
+    if (m === 'PUT') {
+      const body = parse(bytes, G.vaultBytes + 256)
+      if (typeof body.data !== 'string' || !body.data || body.data.length > G.vaultBytes) fail(400, 'bad vault')
+      const now = Date.now()
+      await env.DB.batch([
+        env.DB.prepare('INSERT INTO vaults (id, member_id, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at')
+          .bind(vm[1], me, body.data, now),
+        // A few per member (a passkey, a save code, one spare): the oldest beyond that go.
+        env.DB.prepare('DELETE FROM vaults WHERE member_id = ? AND id NOT IN (SELECT id FROM vaults WHERE member_id = ? ORDER BY updated_at DESC LIMIT ?)')
+          .bind(me, me, G.vaultsPerMember),
+      ])
+      return json({ ok: true })
+    }
   }
 
   // Register this phone's public keys. Signed by the key being registered.

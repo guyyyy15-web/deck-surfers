@@ -422,6 +422,35 @@ test('push: old app versions (no notify) send nothing; mute; expired subscriptio
   assert.equal((await a.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'E' }], notify: { keyVersion: 1, data: 'x'.repeat(3000) } })).status, 200)
 })
 
+test('vault (saved duckling): owner writes, anyone with the id reads, nobody else overwrites; a few per member', async () => {
+  const a = await phone()
+  const b = await phone()
+  const id = sha(`vault-${randomBytes(8).toString('hex')}`)
+  assert.equal((await fetch(`${BASE}/v2/vault/${id}`, { headers: { 'CF-Connecting-IP': '192.0.2.31' } })).status, 404)
+  assert.equal((await a.call('PUT', `/v2/vault/${id}`, { data: 'CIPHERTEXT-1' })).status, 200)
+  const got = await (await fetch(`${BASE}/v2/vault/${id}`, { headers: { 'CF-Connecting-IP': '192.0.2.31' } })).json()
+  assert.equal(got.data, 'CIPHERTEXT-1')
+  assert.equal((await a.call('PUT', `/v2/vault/${id}`, { data: 'CIPHERTEXT-2' })).status, 200, 'the owner updates it')
+  assert.equal((await b.call('PUT', `/v2/vault/${id}`, { data: 'EVIL' })).status, 409, 'someone else cannot take it over')
+  assert.equal((await b.call('DELETE', `/v2/vault/${id}`)).status, 409)
+  assert.equal((await fetch(`${BASE}/v2/vault/${id}`, { method: 'PUT', body: '{"data":"x"}' })).status, 401, 'writes are signed')
+  assert.equal((await a.call('PUT', `/v2/vault/${id}`, { data: 'x'.repeat(9000) })).status, 413)
+  assert.notEqual((await fetch(`${BASE}/v2/vault/not-hex`)).status, 200, 'only 64-hex ids are vaults')
+  // Only the newest 4 per member are kept.
+  const ids = Array.from({ length: 5 }, (_, i) => sha(`v${i}-${randomBytes(4).toString('hex')}`))
+  for (const v of ids) {
+    await a.call('PUT', `/v2/vault/${v}`, { data: 'D' })
+    await new Promise((r) => setTimeout(r, 5))
+  }
+  const rows = JSON.parse(wr(['d1', 'execute', 'nekamot-sync', '--local', '--persist-to', persist, '--json', '--command', `SELECT id FROM vaults WHERE member_id='${a.id}'`]).toString())[0].results
+  assert.deepEqual(rows.map((r) => r.id).sort(), ids.slice(1).sort())
+  assert.equal((await a.call('DELETE', `/v2/vault/${ids[4]}`)).status, 200)
+  // Reading is rate-limited per address (guessing ids is hopeless anyway: 2^256).
+  const codes = []
+  for (let i = 0; i < 32; i++) codes.push((await fetch(`${BASE}/v2/vault/${id}`, { headers: { 'CF-Connecting-IP': '192.0.2.99' } })).status)
+  assert.ok(codes.includes(429))
+})
+
 test('sync: a full batch (200) in one request, duplicates inside a batch, gap-free sequence', async () => {
   const s = newSpace()
   // Its own client address, so the earlier tests' new-backup rate limit doesn't apply.

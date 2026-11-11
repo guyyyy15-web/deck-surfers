@@ -40,10 +40,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     const ctx = await browser.newContext({ ...devices['iPhone 13'], locale: 'he-IL', deviceScaleFactor: 2 })
     await ctx.addInitScript((api) => localStorage.setItem('cz.api', api), API)
     const page = await ctx.newPage()
+    // A built-in "Face ID": a platform authenticator with user verification and the PRF extension.
+    const cdp = await ctx.newCDPSession(page)
+    await cdp.send('WebAuthn.enable')
+    const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
+      options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, hasPrf: true, automaticPresenceSimulation: true },
+    })
     page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`))
     page.on('console', (m) => m.type() === 'error' && !/Failed to load resource|net::ERR/.test(m.text()) && errors.push(`${name}: ${m.text()}`))
     page.on('dialog', (d) => d.accept())
-    return { ctx, page, name }
+    return { ctx, page, name, cdp, authenticatorId }
   }
   const shot = async (p, n) => {
     await wait(450) // let the splash and sheets finish their entrance
@@ -212,6 +218,54 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await noa.page.click('.me-btn')
     await noa.page.waitForSelector('text=הברווזון שלי')
     await shot(noa, '15-me')
+
+    // 9. Save the duckling: Face ID and a save code; then sign in on two "new phones".
+    await noa.page.waitForSelector('#save-pk')
+    await shot(noa, '16-save-card')
+    await noa.page.click('#save-pk')
+    await noa.page.waitForSelector('#save >> text=✓', { timeout: 15000 })
+    check(true, 'Noa saved her duckling with a passkey (PRF)')
+    await noa.page.click('#save-code')
+    await noa.page.waitForSelector('text=קוד השמירה שלך')
+    const code = (await noa.page.textContent('.sheet .invite-box')).trim()
+    check(/^[0-9A-Z]{4}(-[0-9A-Z]{4}){3}$/.test(code), `a save code is shown once (${code.slice(0, 4)}-…)`)
+    await shot(noa, '17-save-code')
+    await noa.page.click('#ok')
+    await noa.page.waitForSelector('#save >> text=קוד שמירה ✓')
+
+    const byCode = await phone('noa-new-phone')
+    await byCode.page.goto(APP)
+    await byCode.page.click('#signin')
+    await byCode.page.waitForSelector('text=כבר יש לי ברווזון 🐥')
+    await shot(byCode, '18-sign-in')
+    await byCode.page.fill('#scode', 'zzzz-zzzz-zzzz-zzzz')
+    await byCode.page.click('#signf button[type="submit"]')
+    await byCode.page.waitForSelector('text=הקוד לא מתאים')
+    check(true, 'a wrong save code is refused politely')
+    // Typed loosely: lower case, spaces instead of dashes.
+    await byCode.page.fill('#scode', code.toLowerCase().split('-').join(' '))
+    await byCode.page.click('#signf button[type="submit"]')
+    await byCode.page.waitForSelector('.yard-card', { timeout: 20000 })
+    check((await byCode.page.$$('.yard-card')).length === 2 && (await byCode.page.isVisible('text=שלום נועה')), 'a new phone with the save code: same duckling, both yards back')
+
+    // Same Face ID, empty app storage: what an iPhone's home-screen app sees after joining in Safari, or a
+    // reinstall. (A passkey copied to another virtual authenticator loses its PRF secret, so "another phone with
+    // the synced passkey" can't be simulated here; real iCloud / Google passkeys carry it.)
+    await noa.page.goto(APP)
+    await noa.page.evaluate(async () => {
+      localStorage.clear()
+      await new Promise((r) => {
+        const req = indexedDB.deleteDatabase('chatzer')
+        req.onsuccess = req.onerror = req.onblocked = () => r()
+      })
+    })
+    await noa.page.reload()
+    await noa.page.waitForSelector('#signin')
+    await noa.page.click('#signin')
+    await noa.page.click('#pk')
+    await noa.page.waitForSelector('.yard-card', { timeout: 20000 })
+    check((await noa.page.$$('.yard-card')).length === 2 && (await noa.page.isVisible('text=שלום נועה')), 'empty app + Face ID → the same duckling and both yards back')
+    await shot(noa, '19-signed-in')
 
     check(errors.length === 0, `no errors in the pages${errors.length ? `: ${errors.join(' | ')}` : ''}`)
     console.log('\nall good')

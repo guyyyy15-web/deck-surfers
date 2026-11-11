@@ -98,3 +98,6 @@ export async function adoptMove(id) {
   if ((await memberIdOf(id.keys.signPub)) !== id.keys.memberId) throw new Error('הקוד לא תקין')
   store({ keys: id.keys, profile: id.profile })
 }
+
+/** Takes on a saved duckling (from the vault): checks the keys belong together first. */
+export const adopt = adoptMove

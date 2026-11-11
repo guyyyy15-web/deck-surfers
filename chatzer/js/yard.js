@@ -317,7 +317,8 @@ function me() {
   return id
 }
 
-async function api(method, path, body, raw) {
+/** A signed request to the server as this phone's duckling (used by vault.js too). */
+export async function api(method, path, body, raw) {
   const { keys } = me()
   const payload = raw ?? (body === undefined ? '' : JSON.stringify(body))
   const headers = await identity.signRequest(keys, method, path, payload)
@@ -439,7 +440,10 @@ export async function refresh(yid) {
     }
     throw e
   }
-  const rec = (await db.getYard(yid)) || { id: yid, keys: {}, since: 0, events: [], outbox: [], seenSeq: 0 }
+  const known = await db.getYard(yid)
+  // A yard new to this phone (just joined, or a saved duckling signing in): what is already there is not news.
+  const fresh = !known || known.removed
+  const rec = known || { id: yid, keys: {}, since: 0, events: [], outbox: [], seenSeq: 0 }
   rec.role = info.role
   rec.muted = !!info.muted
   rec.members = info.members
@@ -449,6 +453,7 @@ export async function refresh(yid) {
   if (info.needsRotation) await rotate(yid).catch(() => undefined)
   await flush(yid).catch(() => undefined)
   const added = await pull(yid)
+  if (fresh) await markSeen(yid)
   // Make sure the others know who I am (once, and again after I change my duckling).
   const st = stateOf(await db.getYard(yid))
   const mine = st.profiles.get(keys.memberId)

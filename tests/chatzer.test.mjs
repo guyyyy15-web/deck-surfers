@@ -154,3 +154,10 @@ test('every app file is in the service worker cache list, and nothing missing', 
   const app = fs.readFileSync(path.join(root, 'js', 'app.js'), 'utf8')
   assert.equal(/APP_VERSION = '([^']+)'/.exec(app)[1], /VERSION = 'chatzer-v([^']+)'/.exec(sw)[1], 'APP_VERSION and sw VERSION match')
 })
+
+test('save codes are read forgivingly: case, spaces, O/0 and I/L/1', async () => {
+  const { normalizeCode, formatCode } = await import('../chatzer/js/vault.js')
+  assert.equal(normalizeCode('7kq2 m9xd-4tra wp1c'), '7KQ2M9XD4TRAWP1C')
+  assert.equal(normalizeCode('OOOO-IIII-LLLL-0000'), '0000111111110000')
+  assert.equal(formatCode('7KQ2M9XD4TRAWP1C'), '7KQ2-M9XD-4TRA-WP1C')
+})
