@@ -28,6 +28,27 @@ tests/        node --test unit tests                 scripts/     serve, smoke, 
 docs/         README screenshots, feature specs      game/        Deck Surfers (separate app)
 ```
 
+## החצר (chatzer/)
+
+A second app in this repo: group coordination (who brings what, chores in turns, polls, chat) for
+https://hechatzer.pages.dev/ (Cloudflare Pages project `hechatzer`). Product docs: the PRD and the brand
+document in Claude Docs. Same encrypted-groups design as נקמות שלי, but separate everywhere it matters:
+
+| | נקמות שלי | החצר |
+|---|---|---|
+| App | repo root (GitHub Pages) | `chatzer/` → `npm run deploy:chatzer` (only the files in its `sw.js` FILES + `_headers`) |
+| Worker | `nekamot-sync` | `chatzer-sync` = same `server/` code, `wrangler deploy --env chatzer` |
+| D1 / R2 | `nekamot-sync` / `nekamot-photos` | `chatzer` / `chatzer-photos` (migrations: `wrangler d1 migrations apply chatzer --remote --env chatzer`) |
+| VAPID private key | Wrangler secret (default env) | Wrangler secret `--env chatzer` (its own key pair) |
+| Storage on the phone | IndexedDB `nekamot`, `nk.*` | IndexedDB `chatzer`, `cz.*` |
+
+- **Releasing החצר:** bump `APP_VERSION` in `chatzer/js/app.js` and `VERSION` in `chatzer/sw.js` together, add new
+  files to its FILES (tests/chatzer.test.mjs checks both), run `npm test` and `npm run smoke:chatzer`, push, wait for
+  green CI, then `npm run deploy:chatzer`. A server change must be deployed to **both** Workers.
+- `fold()` in `chatzer/js/yard.js` owns permissions (author from the signature + current roles), like `groups.js`.
+- Copy speaks to the user via `g(f, m)` and about others via `who(...).g(f, m)` (their own form of address,
+  carried in their `member.profile`). No content about revenges in החצר (teen audience, min age 13).
+
 ## Rules
 
 - **Releasing an app change:** bump `APP_VERSION` in `js/app.js` **and** `VERSION` in `sw.js` together
@@ -62,6 +83,8 @@ npm run smoke          # iPhone browser test, screenshots in screenshots/
 npm run smoke:sync     # 2–4 phones syncing through the local Worker
 npm run smoke:upgrade  # existing users: live version → working copy, data kept, update toast
 npm run smoke:groups   # 3 phones in a group through the local Worker, incl. push end to end (full headless Chromium)
+npm run smoke:chatzer  # החצר: 3 phones, event + home yards, race, poll, chat, offline (local Worker)
+npm run deploy:chatzer # publish chatzer/ to hechatzer.pages.dev
 npm run test:all       # everything, one labelled ✅/❌ line per suite (read every line before releasing)
 npm run deploy:server  # migrations + deploy the Worker (needs CLOUDFLARE_* env, see below)
 ```
