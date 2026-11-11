@@ -7,8 +7,9 @@ import {
 import * as db from './db.js'
 import { loadImage, toBlob, shrinkFile, photoUrl, rememberUrl, forgetUrl, blobToDataUrl, dataUrlToBlob, FACE_SIDE } from './images.js'
 import { IDEAS } from './ideas.js'
+import * as sync from './sync.js'
 
-export const APP_VERSION = '1.0.1'
+export const APP_VERSION = '1.1.0'
 
 const S = {
   list: [],
@@ -42,6 +43,8 @@ async function save(r) {
   if (i >= 0) S.list[i] = r
   else S.list.push(r)
   await db.putRevenge(r)
+  sync.touched(r.id)
+  sync.soon()
 }
 
 async function storePhoto(blob, kind) {
@@ -55,6 +58,8 @@ async function dropPhoto(id) {
   if (!id) return
   forgetUrl(id)
   await db.deletePhoto(id).catch(() => undefined)
+  sync.deleted(id, 'photo')
+  sync.soon()
 }
 
 function avatar(r, { size = 56, badge = 'type', lg = false } = {}) {
@@ -280,6 +285,8 @@ function completeSheet(r, from) {
 async function removeRevenge(r) {
   S.list = S.list.filter((x) => x.id !== r.id)
   await db.deleteRevenge(r.id)
+  sync.deleted(r.id, 'revenge')
+  sync.soon(7000)
   go(r.status === 'done' ? '#/done' : '#/')
   let undone = false
   toast('הנקמה נמחקה', {
@@ -829,6 +836,7 @@ function settingsScreen() {
   return {
     html: `
       ${topbar({ title: 'הגדרות', start: backBtn('#/') })}
+      ${syncSection()}
       <section class="group"><h2>איך לפנות אליך?</h2><div class="rows">
         <div class="row"><span class="grow">לשון פנייה<small>${g('"שמרי נקמה"', '"שמור נקמה"')}</small></span>${seg('voice', [['f', 'נקבה'], ['m', 'זכר']])}</div></div></section>
       <section class="group"><h2>מראה</h2><div class="rows">
@@ -838,7 +846,7 @@ function settingsScreen() {
           ? `<span class="grow">${icon('check', 20)} האפליקציה מותקנת במסך הבית.</span>`
           : `<ol class="steps"><li>לפתוח את הקישור ב<b>ספארי</b>.</li><li>ללחוץ על ${icon('share', 18)} <b>שיתוף</b> בתחתית המסך.</li><li>לבחור <b>"הוספה למסך הבית"</b> ואז <b>"הוספה"</b>.</li><li>מעכשיו היא נפתחת מהאייקון, במסך מלא, וגם בלי אינטרנט.</li></ol>`}</div></div></section>
       <section class="group"><h2>הנתונים שלך</h2><div class="rows">
-        <div class="row">${icon('lock', 24, 'lilac-200')}<span class="grow">הכל נשמר רק בטלפון הזה<small>אין שרת, אין חשבון ואף אחד אחר לא רואה. <span data-used></span></small></span></div>
+        <div class="row">${icon('lock', 24, 'lilac-200')}<span class="grow">${sync.isOn() ? 'הכל שמור בטלפון, ובענן רק עותק מוצפן' : 'הכל נשמר רק בטלפון הזה'}<small>${sync.isOn() ? 'רק טלפון עם קוד הסנכרון יכול לפתוח אותו.' : 'אין שרת, אין חשבון ואף אחד אחר לא רואה.'} <span data-used></span></small></span></div>
         <button type="button" class="row" data-act="export">${icon('download', 24)}<span class="grow">ייצוא גיבוי<small>קובץ אחד עם כל הנקמות והתמונות. ${g('שמרי', 'שמור')} אותו בקבצים או ב־iCloud.</small></span></button>
         <label class="row">${icon('share', 24)}<span class="grow">ייבוא גיבוי<small>מאחד עם מה שכבר יש כאן. גם להעברה לטלפון חדש.</small></span><input type="file" accept="application/json,.json" data-import aria-label="קובץ גיבוי"></label>
         <button type="button" class="row danger" data-act="wipe">${icon('trash', 24)}<span class="grow">מחיקת כל הנתונים</span></button></div></section>
@@ -861,6 +869,192 @@ function settingsScreen() {
         if (f) await importBackup(f)
       }
     },
+  }
+}
+
+// ---------- Cloud backup and sync ----------
+
+const RTF = new Intl.RelativeTimeFormat('he', { numeric: 'auto' })
+function ago(iso) {
+  const sec = Math.round((new Date(iso) - Date.now()) / 1000)
+  if (sec > -45) return 'עכשיו'
+  const min = Math.round(sec / 60)
+  if (min > -60) return RTF.format(min, 'minute')
+  const h = Math.round(min / 60)
+  if (h > -24) return RTF.format(h, 'hour')
+  return RTF.format(Math.round(h / 24), 'day')
+}
+
+function syncSection() {
+  const st = sync.status()
+  if (!st.on) {
+    return `<section class="group"><h2>גיבוי וסנכרון בענן</h2><div class="rows">
+      <div class="row">${icon('cloud', 26, 'lilac-200')}<span class="grow">כבוי<small>עותק מוצפן בענן, וסנכרון בין כל הטלפונים שלך. בלי הרשמה ובלי סיסמה.</small></span></div>
+      <button type="button" class="row" data-act="sync-on">${icon('cloud', 24)}<span class="grow"><b>הפעלת גיבוי בענן</b><small>הטלפון הזה מקבל קוד סנכרון.</small></span></button>
+      <button type="button" class="row" data-act="sync-join">${icon('link', 24)}<span class="grow">יש לי קוד מטלפון אחר</span></button></div></section>`
+  }
+  const line = st.error
+    ? `<small style="color:var(--danger)">${st.error === 'offline' ? 'אין אינטרנט כרגע. הסנכרון ימשיך כשיחזור.' : 'הסנכרון האחרון לא הצליח. ננסה שוב.'}</small>`
+    : `<small>${st.lastOk ? `סונכרן ${ago(st.lastOk)}` : 'מסתנכרן…'}</small>`
+  return `<section class="group"><h2>גיבוי וסנכרון בענן</h2><div class="rows">
+    <div class="row">${icon('cloud', 26, 'lilac-300')}<span class="grow"><b>פעיל</b> · מוצפן${line}</span></div>
+    <button type="button" class="row" data-act="sync-now">${icon('refresh', 24)}<span class="grow">סנכרון עכשיו</span></button>
+    <button type="button" class="row" data-act="sync-share">${icon('link', 24)}<span class="grow">חיבור טלפון נוסף<small>קישור או קוד, ושם הכל מופיע.</small></span></button>
+    <button type="button" class="row" data-act="sync-off">${icon('x', 24)}<span class="grow">ניתוק הטלפון הזה<small>הנקמות נשארות בטלפון ובגיבוי.</small></span></button>
+    <button type="button" class="row danger" data-act="sync-delete">${icon('trash', 24)}<span class="grow">מחיקת הגיבוי מהענן</span></button></div></section>`
+}
+
+function codeSheet() {
+  const st = sync.status()
+  const link = sync.pairLink(st.code)
+  const s = sheet(
+    `<div class="sheet-head">${icon('cloud', 44, 'lilac-200')}<h2>חיבור טלפון נוסף</h2>
+       <p>${g('פתחי', 'פתח')} את הקישור בטלפון השני (בספארי), או ${g('הקלידי', 'הקלד')} שם את הקוד בהגדרות.</p></div>
+     <div class="panel" style="margin:0;text-align:center"><div class="muted" style="font-size:13px">קוד הסנכרון</div>
+       <div dir="ltr" data-code style="font-family:ui-monospace,Menlo,monospace;font-size:19px;line-height:30px;font-weight:600;letter-spacing:.04em;user-select:all">${esc(sync.formatCode(st.code))}</div></div>
+     <p class="muted" style="margin:0;font-size:14px;line-height:20px">${icon('lock', 16)} מי שיש לו את הקוד רואה את כל הנקמות. ${g('שמרי', 'שמור')} אותו במקום בטוח: בלי הקוד אין דרך לשחזר את הגיבוי.</p>
+     <div class="actions" style="padding-top:0">
+       <button type="button" class="nk-btn nk-btn-primary" data-share>${icon('share', 22)}<span>שיתוף הקישור</span></button>
+       <button type="button" class="nk-btn nk-btn-quiet" data-copy>העתקת הקוד</button>
+       <button type="button" class="nk-btn nk-btn-quiet" data-done style="color:var(--ink-muted)">סיום</button></div>`,
+    { label: 'חיבור טלפון נוסף' },
+  )
+  s.el.querySelector('[data-share]').onclick = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'נקמות שלי · סנכרון', url: link })
+        return
+      } catch (e) {
+        if (e.name === 'AbortError') return
+      }
+    }
+    await copy(link)
+    toast('הקישור הועתק')
+  }
+  s.el.querySelector('[data-done]').onclick = () => s.close()
+  s.el.querySelector('[data-copy]').onclick = async () => {
+    await copy(sync.formatCode(st.code))
+    toast('הקוד הועתק')
+  }
+}
+
+async function copy(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    const t = Object.assign(document.createElement('textarea'), { value: text })
+    document.body.append(t)
+    t.select()
+    document.execCommand('copy')
+    t.remove()
+  }
+}
+
+function joinSheet() {
+  const s = sheet(
+    `<div class="sheet-head">${icon('link', 40, 'lilac-200')}<h2>חיבור לגיבוי קיים</h2>
+       <p>${g('הדביקי', 'הדבק')} את הקישור או ${g('הקלידי', 'הקלד')} את הקוד מהטלפון השני. הנקמות שכבר יש כאן יתאחדו עם הגיבוי.</p></div>
+     <div class="nk-field"><label class="nk-field-label" for="j-code">קוד סנכרון</label>
+       <div class="nk-input">${icon('lock', 24, 'lilac-200')}<input id="j-code" dir="ltr" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-…"></div>
+       <div class="nk-field-error" hidden></div></div>
+     <div class="actions" style="padding-top:0"><button type="button" class="nk-btn nk-btn-primary" data-go><span>חיבור</span>${icon('check', 22)}</button></div>`,
+    { label: 'חיבור לגיבוי קיים' },
+  )
+  const input = s.el.querySelector('#j-code')
+  const err = s.el.querySelector('.nk-field-error')
+  s.el.querySelector('[data-go]').onclick = async (e) => {
+    e.currentTarget.disabled = true
+    try {
+      await joinWith(input.value)
+      s.close()
+    } catch (x) {
+      err.textContent = x.message
+      err.hidden = false
+      e.currentTarget.disabled = false
+    }
+  }
+}
+
+async function joinWith(code) {
+  const before = S.list.length
+  await sync.join(code)
+  S.list = await db.allRevenges()
+  const got = S.list.length - before
+  toast(got > 0 ? `מחובר! ${got} נקמות הגיעו מהענן ☁️` : 'מחובר לגיבוי בענן ☁️')
+  render()
+}
+
+function pairScreen(raw) {
+  const code = sync.normalizeCode(`#/pair/${raw}`)
+  const st = sync.status()
+  const same = st.on && st.code === code
+  return {
+    html: `${topbar({ title: 'חיבור טלפון', start: backBtn('#/') })}
+      <div class="empty">${cat(140)}
+        ${!code
+          ? `<h2>הקישור לא תקין</h2><p>אולי חסר בו חלק. ${g('נסי', 'נסה')} להעתיק אותו שוב, או ${g('הקלידי', 'הקלד')} את הקוד בהגדרות.</p>`
+          : same
+            ? `<h2>הטלפון כבר מחובר</h2><p>הוא כבר מסתנכרן עם הגיבוי הזה.</p><a class="nk-btn nk-btn-soft" href="#/" style="margin-top:16px">לנקמות</a>`
+            : `<h2>לחבר את הטלפון הזה?</h2><p>הנקמות מהגיבוי בענן יופיעו כאן, ומה שכבר יש בטלפון יתווסף לגיבוי.${st.on ? ' הטלפון מחובר עכשיו לגיבוי אחר, והחיבור יחליף אותו.' : ''}</p>
+               <button type="button" class="nk-btn nk-btn-primary" data-pair style="margin-top:20px">${icon('cloud', 22)}<span>חיבור</span></button>
+               <p class="nk-field-error" data-err hidden style="margin-top:12px"></p>`}
+      </div>`,
+    mount(root) {
+      const b = root.querySelector('[data-pair]')
+      if (!b) return
+      b.onclick = async () => {
+        b.disabled = true
+        try {
+          await joinWith(code)
+          go('#/', true) // also drops the code from the history
+        } catch (x) {
+          const e = root.querySelector('[data-err]')
+          e.textContent = x.message
+          e.hidden = false
+          b.disabled = false
+        }
+      }
+    },
+  }
+}
+
+async function syncAction(act) {
+  if (act === 'sync-on') {
+    try {
+      await sync.enable()
+      render()
+      codeSheet()
+    } catch (e) {
+      toast(e.message)
+    }
+  } else if (act === 'sync-join') joinSheet()
+  else if (act === 'sync-share') codeSheet()
+  else if (act === 'sync-now') {
+    toast('מסנכרן…')
+    try {
+      const r = await sync.sync()
+      S.list = await db.allRevenges()
+      toast(r.pulled ? `סונכרן. ${r.pulled} עדכונים הגיעו` : 'הכל מסונכרן ✓')
+    } catch {
+      toast('הסנכרון לא הצליח. בדקו את האינטרנט.')
+    }
+    render()
+  } else if (act === 'sync-off') {
+    if (await confirmSheet({ title: 'לנתק את הטלפון הזה?', text: 'הנקמות נשארות כאן ובגיבוי. אפשר להתחבר שוב עם הקוד.', ok: 'ניתוק', danger: false })) {
+      sync.disconnect()
+      render()
+      toast('הטלפון נותק מהגיבוי')
+    }
+  } else if (act === 'sync-delete') {
+    if (await confirmSheet({ title: 'למחוק את הגיבוי מהענן?', text: 'הגיבוי יימחק מהענן לכל הטלפונים. מה ששמור בכל טלפון נשאר בו.', ok: 'מחיקה מהענן' })) {
+      try {
+        await sync.deleteCloud()
+        render()
+        toast('הגיבוי נמחק מהענן')
+      } catch {
+        toast('המחיקה לא הצליחה. בדקו את האינטרנט.')
+      }
+    }
   }
 }
 
@@ -888,6 +1082,8 @@ async function importBackup(file) {
     }
     for (const r of list) await db.putRevenge(r)
     S.list = list
+    sync.pushAllNextTime()
+    sync.soon()
     toast(added || updated ? `יובאו ${added} נקמות חדשות${updated ? `, ${updated} עודכנו` : ''}` : 'הכל כבר היה כאן')
     render()
   } catch (err) {
@@ -921,10 +1117,16 @@ app.addEventListener('click', async (e) => {
     const list = IDEAS.filter((i) => (S.ideaFilter === 'all' || i.type === S.ideaFilter) && i !== S.lucky)
     S.lucky = list[Math.floor(Math.random() * list.length)] || S.lucky
     render()
+  } else if (act.startsWith('sync-')) {
+    syncAction(act)
   } else if (act === 'export') {
     exportBackup().catch(() => toast('הייצוא נכשל'))
   } else if (act === 'wipe') {
-    if (await confirmSheet({ title: 'למחוק הכל?', text: `כל הנקמות והתמונות יימחקו מהטלפון ואין דרך לשחזר. כדאי ${g('לייצא', 'לייצא')} גיבוי לפני.`, ok: 'מחיקת הכל' })) {
+    const text = sync.isOn()
+      ? 'כל הנקמות והתמונות יימחקו מהטלפון הזה, והוא יתנתק מהגיבוי בענן. הגיבוי עצמו והטלפונים האחרים לא ייפגעו.'
+      : 'כל הנקמות והתמונות יימחקו מהטלפון ואין דרך לשחזר. כדאי לייצא גיבוי לפני.'
+    if (await confirmSheet({ title: 'למחוק הכל?', text, ok: 'מחיקת הכל' })) {
+      sync.disconnect()
       await db.clearAll()
       S.list = []
       toast('הכל נמחק. דף חדש 🕊️')
@@ -948,6 +1150,7 @@ function route() {
   if (parts[0] === 'stats') return { name: 'stats', query }
   if (parts[0] === 'ideas') return { name: 'ideas', query }
   if (parts[0] === 'settings') return { name: 'settings', query }
+  if (parts[0] === 'pair') return { name: 'pair', code: parts[1] || '', query }
   return { name: 'missing', query }
 }
 
@@ -962,6 +1165,7 @@ function render() {
   else if (rt.name === 'stats') scr = statsScreen()
   else if (rt.name === 'ideas') scr = ideasScreen()
   else if (rt.name === 'settings') scr = settingsScreen()
+  else if (rt.name === 'pair') scr = pairScreen(rt.code)
   else scr = notFound()
   const key = location.hash
   const changed = key !== lastKey
@@ -1002,6 +1206,17 @@ async function start() {
   }
   window.addEventListener('hashchange', render)
   render()
+  sync.onRemoteChange(async () => {
+    S.list = await db.allRevenges()
+    // Don't pull the rug from under a form, a sheet or the photo cropper.
+    if (route().name !== 'form' && !document.querySelector('.sheet-wrap, [role="dialog"]')) {
+      lastKey = location.hash
+      render()
+    }
+  })
+  sync.soon(400)
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && sync.soon(300))
+  window.addEventListener('online', () => sync.soon(300))
   // The splash is part of the design; keep it up long enough to be seen, never long enough to annoy.
   const wait = Math.max(0, (sessionStorage.getItem('nk.seen') ? 250 : 1100) - (performance.now() - t0))
   setTimeout(() => {

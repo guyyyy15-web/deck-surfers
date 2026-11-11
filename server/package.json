@@ -1,0 +1,15 @@
+{
+  "name": "nekamot-sync",
+  "private": true,
+  "description": "Encrypted backup and sync between phones for נקמות שלי (Cloudflare Worker + D1 + R2)",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "test": "node --test test/*.test.mjs",
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute nekamot-sync --remote --file schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "4.160.1"
+  }
+}

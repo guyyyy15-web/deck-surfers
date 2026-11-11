@@ -29,6 +29,9 @@ const ICONS = {
   dice: '<rect x="4" y="4" width="16" height="16" rx="4" data-fill/><circle cx="9" cy="9" r="1.2" fill="currentColor"/><circle cx="15" cy="15" r="1.2" fill="currentColor"/><circle cx="15" cy="9" r="1.2" fill="currentColor"/><circle cx="9" cy="15" r="1.2" fill="currentColor"/>',
   phone: '<rect x="7" y="3" width="10" height="18" rx="2.5" data-fill/><path d="M11 18h2"/>',
   moon: '<path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z" data-fill/>',
+  cloud: '<path d="M7 18.5h10a4 4 0 0 0 .7-7.94A6 6 0 0 0 6.3 9.3 4.6 4.6 0 0 0 7 18.5z" data-fill/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  refresh: '<path d="M20 11a8 8 0 0 0-14.3-4.3L4 9"/><path d="M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14.3 4.3L20 15"/><path d="M20 20v-5h-5"/>',
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5" data-fill/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
 }
 
