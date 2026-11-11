@@ -5,7 +5,8 @@ import { spawn, execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, randomBytes, createECDH } from 'node:crypto'
+import { createServer } from 'node:http'
 
 const PORT = 8790
 const BASE = `http://127.0.0.1:${PORT}`
@@ -13,11 +14,29 @@ const dir = new URL('..', import.meta.url).pathname
 const persist = mkdtempSync(join(tmpdir(), 'nk-sync-'))
 let proc
 
+// A pretend push service: records what the Worker sends; /gone/… answers 410 like an expired subscription.
+const PUSH_PORT = 8799
+const pushed = []
+const pushService = createServer((req, res) => {
+  const chunks = []
+  req.on('data', (c) => chunks.push(c))
+  req.on('end', () => {
+    pushed.push({ path: req.url, headers: req.headers, body: Buffer.concat(chunks) })
+    res.writeHead(req.url.startsWith('/gone/') ? 410 : 201)
+    res.end()
+  })
+})
+const vapidKeys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
+const VAPID_PUBLIC = Buffer.from(await crypto.subtle.exportKey('raw', vapidKeys.publicKey)).toString('base64url')
+const VAPID_PRIVATE = JSON.stringify(await crypto.subtle.exportKey('jwk', vapidKeys.privateKey))
+
 const wr = (args) => execFileSync('npx', ['wrangler', ...args], { cwd: dir, stdio: 'pipe', env: { ...process.env, CLOUDFLARE_API_TOKEN: 'local', CI: '1' } })
 
 before(async () => {
   wr(['d1', 'migrations', 'apply', 'nekamot-sync', '--local', '--persist-to', persist])
-  proc = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(PORT), '--persist-to', persist, '--var', 'ALLOW_LOCALHOST:1', '--var', 'ALLOWED_ORIGINS:https://guyyyy15-web.github.io'], {
+  await new Promise((r) => pushService.listen(PUSH_PORT, '127.0.0.1', r))
+  proc = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(PORT), '--persist-to', persist, '--var', 'ALLOW_LOCALHOST:1', '--var', 'ALLOWED_ORIGINS:https://guyyyy15-web.github.io',
+    '--var', `VAPID_PUBLIC:${VAPID_PUBLIC}`, '--var', `VAPID_PRIVATE_JWK:${VAPID_PRIVATE}`, '--var', 'VAPID_SUBJECT:https://example.test/'], {
     cwd: dir, detached: true, stdio: 'ignore', env: { ...process.env, CLOUDFLARE_API_TOKEN: 'local', CI: '1' },
   })
   for (let i = 0; i < 120; i++) {
@@ -29,6 +48,7 @@ before(async () => {
   throw new Error('wrangler dev did not start')
 })
 after(() => {
+  pushService.close()
   try { process.kill(-proc.pid) } catch { /* gone */ }
   rmSync(persist, { recursive: true, force: true })
 })
@@ -272,4 +292,110 @@ test('groups: encrypted photos for members only; group limit of 20', async () =>
   // Deleting the group removes its photos.
   assert.equal((await a.call('DELETE', `/v2/groups/${g}`)).status, 200)
   assert.equal((await a.call('GET', `/v2/groups/${g}/photos/ph0001`)).status, 403)
+})
+
+// ---------- Push notifications ----------
+
+/** A browser subscription pointing at the pretend push service. */
+function subscription(name, gone = false) {
+  const ecdh = createECDH('prime256v1')
+  ecdh.generateKeys()
+  const auth = randomBytes(16)
+  return { ecdh, authBytes: auth, endpoint: `http://127.0.0.1:${PUSH_PORT}/${gone ? 'gone' : 'push'}/${name}-${randomBytes(4).toString('hex')}`, p256dh: ecdh.getPublicKey().toString('base64url'), auth: auth.toString('base64url') }
+}
+
+async function decryptPush(sub, body) {
+  // RFC 8291 decryption, done here with WebCrypto as a browser would.
+  const enc = new TextEncoder()
+  const hk = async (salt, ikm, info, len) => new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']), len * 8))
+  const salt = body.subarray(0, 16), asPub = body.subarray(21, 21 + body[20]), ct = body.subarray(21 + body[20])
+  const shared = sub.ecdh.computeSecret(asPub)
+  const ikm = await hk(sub.authBytes, shared, Buffer.concat([enc.encode('WebPush: info\0'), sub.ecdh.getPublicKey(), asPub]), 32)
+  const key = await crypto.subtle.importKey('raw', await hk(salt, ikm, enc.encode('Content-Encoding: aes128gcm\0'), 16), 'AES-GCM', false, ['decrypt'])
+  const plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: await hk(salt, ikm, enc.encode('Content-Encoding: nonce\0'), 12) }, key, ct))
+  return JSON.parse(new TextDecoder().decode(plain.subarray(0, -1)))
+}
+const settle = () => new Promise((r) => setTimeout(r, 1200))
+const sentTo = (sub) => pushed.filter((p) => sub.endpoint.endsWith(p.path))
+
+async function groupOf(n) {
+  const people = []
+  for (let i = 0; i < n; i++) people.push(await phone())
+  const [a] = people
+  const g = gid()
+  await a.call('POST', '/v2/groups', { id: g, wrapped: 'A1' })
+  const auth = randomBytes(32).toString('hex'), inv = `i${randomBytes(9).toString('hex')}`
+  await a.call('POST', `/v2/groups/${g}/invites`, { id: inv, authHash: sha(auth), wrappedKeys: [] })
+  for (const x of people.slice(1)) await x.call('POST', `/v2/invites/${inv}/accept`, { auth, wrappedForMe: [] })
+  return { g, people }
+}
+
+test('push: public key, subscribe rules', async () => {
+  assert.equal((await (await fetch(`${BASE}/v2/push/key`)).json()).key, VAPID_PUBLIC)
+  const a = await phone()
+  const sub = subscription('a')
+  assert.equal((await a.call('PUT', '/v2/push', { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth })).status, 200)
+  assert.equal((await a.call('PUT', '/v2/push', { endpoint: 'https://evil.example/x', p256dh: sub.p256dh, auth: sub.auth })).status, 400)
+  assert.equal((await a.call('PUT', '/v2/push', { endpoint: sub.endpoint, p256dh: 'short', auth: sub.auth })).status, 400)
+  assert.equal((await fetch(`${BASE}/v2/push`, { method: 'PUT', body: '{}' })).status, 401)
+  // Only the newest 3 subscriptions per person are kept.
+  const subs = [subscription('a1'), subscription('a2'), subscription('a3'), subscription('a4')]
+  for (const s of subs) {
+    await a.call('PUT', '/v2/push', { endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth })
+    await new Promise((r) => setTimeout(r, 5))
+  }
+  const rows = JSON.parse(wr(['d1', 'execute', 'nekamot-sync', '--local', '--persist-to', persist, '--json', '--command', `SELECT endpoint FROM push_subs WHERE member_id='${a.id}'`]).toString())[0].results
+  assert.deepEqual(rows.map((r) => r.endpoint).sort(), subs.slice(1).map((x) => x.endpoint).sort(), 'the oldest subscription was dropped')
+})
+
+test('push: posting with a notification reaches the other members only, encrypted end to end', async () => {
+  const { g, people: [a, b, c] } = await groupOf(3)
+  const subs = { a: subscription('pa'), b: subscription('pb'), c: subscription('pc') }
+  for (const [x, s] of [[a, subs.a], [b, subs.b], [c, subs.c]]) await x.call('PUT', '/v2/push', { endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth })
+  const r = await a.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'EV' }], notify: { keyVersion: 1, data: 'NOTE-CIPHERTEXT' } })
+  assert.equal(r.status, 200)
+  await settle()
+  assert.equal(sentTo(subs.a).length, 0, 'the author gets nothing')
+  for (const s of [subs.b, subs.c]) {
+    const got = sentTo(s)
+    assert.equal(got.length, 1)
+    assert.equal(got[0].headers['content-encoding'], 'aes128gcm')
+    assert.match(got[0].headers.authorization, /^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=/)
+    assert.ok(Number(got[0].headers.ttl) > 0)
+    assert.deepEqual(await decryptPush(s, got[0].body), { g, v: 1, d: 'NOTE-CIPHERTEXT', s: r.data.seq })
+  }
+  // Cooldown: a second post right away doesn't push again.
+  await a.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'EV2' }], notify: { keyVersion: 1, data: 'N2' } })
+  await settle()
+  assert.equal(sentTo(subs.b).length, 1, 'cooldown holds the second push')
+})
+
+test('push: old app versions (no notify) send nothing; mute; expired subscriptions are dropped', async () => {
+  const { g, people: [a, b, c] } = await groupOf(3)
+  const sb = subscription('mb'), sc = subscription('mc', true)
+  await b.call('PUT', '/v2/push', { endpoint: sb.endpoint, p256dh: sb.p256dh, auth: sb.auth })
+  await c.call('PUT', '/v2/push', { endpoint: sc.endpoint, p256dh: sc.p256dh, auth: sc.auth })
+  // An event from an older app (no notify field) still works and pushes nothing.
+  assert.equal((await a.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'OLD' }] })).status, 200)
+  await settle()
+  assert.equal(sentTo(sb).length + sentTo(sc).length, 0)
+  // B mutes the group.
+  assert.equal((await b.call('POST', `/v2/groups/${g}/mute`, { muted: true })).data.muted, true)
+  assert.equal((await b.call('GET', `/v2/groups/${g}`)).data.muted, true)
+  await a.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'E' }], notify: { keyVersion: 1, data: 'N' } })
+  await settle()
+  assert.equal(sentTo(sb).length, 0, 'muted')
+  // C's subscription answered 410: it is removed, so the next push doesn't try it again.
+  assert.equal(sentTo(sc).length, 1)
+  await b.call('POST', `/v2/groups/${g}/mute`, { muted: false })
+  await new Promise((r) => setTimeout(r, 100))
+  const before = pushed.length
+  await b.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'E' }], notify: { keyVersion: 1, data: 'N' } })
+  await settle()
+  assert.equal(sentTo(sc).length, 1, 'gone subscription not retried')
+  assert.ok(pushed.length >= before)
+  // Turning push off removes the subscription.
+  assert.equal((await b.call('POST', '/v2/push/off', { endpoint: sb.endpoint })).status, 200)
+  // An oversize notification is ignored, the events are still stored.
+  assert.equal((await a.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'E' }], notify: { keyVersion: 1, data: 'x'.repeat(3000) } })).status, 200)
 })

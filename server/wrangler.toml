@@ -11,6 +11,9 @@ enabled = true
 # Only the app's own address may call the API from a browser.
 ALLOWED_ORIGINS = "https://guyyyy15-web.github.io"
 ALLOW_LOCALHOST = "0"
+# Web Push: the public half of the VAPID key (the private half is a Wrangler secret, VAPID_PRIVATE_JWK).
+VAPID_PUBLIC = "BGHly8oQN3JLmnZZxqiTe__eUUzM3Vq2jIoXUXv63KCzyCbTYz1TLBrizX0JmN9Kf7rfPhiWvaOT_lGVcz08rOE"
+VAPID_SUBJECT = "https://guyyyy15-web.github.io/deck-surfers/"
 
 [[d1_databases]]
 binding = "DB"

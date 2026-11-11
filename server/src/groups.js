@@ -5,6 +5,7 @@
 // Content: the server never sees plaintext; events and photos are encrypted with the group key.
 
 import { LIMITS, fail, json, readJson, sha256hex, same, limit, totalBytes } from './index.js'
+import { sendPush, allowedEndpoint, unb64u } from './webpush.js'
 
 const G = {
   maxMembers: 20,
@@ -13,6 +14,11 @@ const G = {
   groupBytes: 300 * 1024 * 1024,
   invitesPerGroup: 50,
   inviteDays: 30,
+  // Push: a member gets at most one notification per group per cooldown; at most this many sends per post.
+  pushCooldownMs: 30e3,
+  pushPerPost: 30,
+  subsPerMember: 3,
+  notifyBytes: 2048,
 }
 
 const MEMBER = /^[a-f0-9]{24}$/
@@ -72,12 +78,18 @@ const parse = (bytes, max) => {
   }
 }
 
-export async function groupsRoute(req, env, url) {
+export async function groupsRoute(req, env, url, ctx) {
   const path = url.pathname + url.search
   const p = url.pathname
   const m = req.method
   // Every /v2 body is read once as bytes, because the signature covers its hash.
   const bytes = m === 'GET' || m === 'DELETE' ? new Uint8Array(0) : new Uint8Array(await req.arrayBuffer())
+
+  // The VAPID public key the app subscribes with (public by design).
+  if (p === '/v2/push/key' && m === 'GET') {
+    if (!env.VAPID_PUBLIC) fail(503, 'push not configured')
+    return json({ key: env.VAPID_PUBLIC })
+  }
 
   // Register this phone's public keys. Signed by the key being registered.
   if (p === '/v2/identity' && m === 'POST') {
@@ -140,6 +152,35 @@ export async function groupsRoute(req, env, url) {
 
   const me = await caller(req, env, path, bytes)
 
+  // This phone's push subscription (signed, so it belongs to this identity).
+  if (p === '/v2/push' && m === 'PUT') {
+    const body = parse(bytes, 4096)
+    if (!allowedEndpoint(body.endpoint, env.ALLOW_LOCALHOST === '1') || body.endpoint.length > 1024) fail(400, 'bad endpoint')
+    let ok = false
+    try {
+      ok = unb64u(body.p256dh || '').length === 65 && unb64u(body.auth || '').length === 16
+    } catch { /* bad base64 */ }
+    if (!ok) fail(400, 'bad keys')
+    await env.DB.prepare(
+      `INSERT INTO push_subs (endpoint, member_id, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (endpoint) DO UPDATE SET member_id = excluded.member_id, p256dh = excluded.p256dh, auth = excluded.auth`,
+    )
+      .bind(body.endpoint, me, body.p256dh, body.auth, Date.now())
+      .run()
+    // Keep only the newest few subscriptions per member (old phones, reinstalls).
+    await env.DB.prepare(
+      'DELETE FROM push_subs WHERE member_id = ? AND endpoint NOT IN (SELECT endpoint FROM push_subs WHERE member_id = ? ORDER BY created_at DESC LIMIT ?)',
+    )
+      .bind(me, me, G.subsPerMember)
+      .run()
+    return json({ ok: true })
+  }
+  if (p === '/v2/push/off' && m === 'POST') {
+    const body = parse(bytes, 4096)
+    await env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ? AND member_id = ?').bind(String(body.endpoint || ''), me).run()
+    return json({ ok: true })
+  }
+
   // Create a group. The creator becomes admin and stores key version 1 wrapped for themself.
   if (p === '/v2/groups' && m === 'POST') {
     const body = parse(bytes, 8192)
@@ -184,8 +225,9 @@ export async function groupsRoute(req, env, url) {
     )
       .bind(gid, me)
       .all()
+    const muted = !!(await env.DB.prepare('SELECT 1 AS x FROM push_mutes WHERE group_id = ? AND member_id = ?').bind(gid, me).first('x'))
     return json({
-      id: gid, keyVersion: group.key_version, needsRotation: !!group.needs_rotation, seq: group.seq, role,
+      id: gid, keyVersion: group.key_version, needsRotation: !!group.needs_rotation, seq: group.seq, role, muted,
       members: members.map((x) => ({ id: x.id, role: x.role, joinedAt: x.joined_at, dhPub: JSON.parse(x.dh_pub) })),
       keys,
     })
@@ -225,7 +267,22 @@ export async function groupsRoute(req, env, url) {
         .bind(gid, seq, me, e.keyVersion, e.data, Date.now()))
     }
     await env.DB.batch(stmts)
+    // Optional notification (encrypted on the phone with the group key). Older app versions send none.
+    const n = body.notify
+    if (n && typeof n.data === 'string' && n.data.length <= G.notifyBytes && Number.isInteger(n.keyVersion)) {
+      const work = notifyMembers(env, gid, me, { g: gid, v: n.keyVersion, d: n.data, s: seq })
+      if (ctx?.waitUntil) ctx.waitUntil(work.catch((e) => console.error(`push ${gid}: ${e}`)))
+      else await work.catch(() => undefined)
+    }
     return json({ ok: true, seq })
+  }
+
+  if (rest === '/mute' && m === 'POST') {
+    const body = parse(bytes, 256)
+    await env.DB.prepare(body.muted ? 'INSERT OR IGNORE INTO push_mutes (group_id, member_id) VALUES (?, ?)' : 'DELETE FROM push_mutes WHERE group_id = ? AND member_id = ?')
+      .bind(gid, me)
+      .run()
+    return json({ ok: true, muted: !!body.muted })
   }
 
   // A new key version, wrapped for every current member (after someone left).
@@ -318,6 +375,39 @@ export async function groupsRoute(req, env, url) {
   fail(404, 'not found')
 }
 
+/** Pushes one notification to every other member's phones (not muted, not pushed in the last cooldown). */
+async function notifyMembers(env, gid, author, payload) {
+  if (!env.VAPID_PUBLIC || !env.VAPID_PRIVATE_JWK) return
+  const now = Date.now()
+  const { results } = await env.DB.prepare(
+    `SELECT s.endpoint, s.member_id, s.p256dh, s.auth FROM push_subs s
+     JOIN members m ON m.member_id = s.member_id AND m.group_id = ? AND m.removed_at IS NULL
+     WHERE s.member_id != ?
+       AND s.member_id NOT IN (SELECT member_id FROM push_mutes WHERE group_id = ?)
+       AND s.member_id NOT IN (SELECT member_id FROM push_sent WHERE group_id = ? AND at > ?)
+     LIMIT ?`,
+  )
+    .bind(gid, author, gid, gid, now - G.pushCooldownMs, G.pushPerPost)
+    .all()
+  if (!results.length) return
+  const vapid = { publicKey: env.VAPID_PUBLIC, privateJwk: JSON.parse(env.VAPID_PRIVATE_JWK), subject: env.VAPID_SUBJECT || 'https://guyyyy15-web.github.io/deck-surfers/' }
+  const body = new TextEncoder().encode(JSON.stringify(payload))
+  const sent = new Set()
+  const gone = []
+  await Promise.all(results.map(async (s) => {
+    try {
+      const status = await sendPush(s, body, { vapid, topic: gid.slice(0, 32) })
+      if (status === 404 || status === 410) gone.push(s.endpoint)
+      else if (status < 300) sent.add(s.member_id)
+    } catch {
+      /* one bad subscription doesn't stop the others */
+    }
+  }))
+  const stmts = [...sent].map((mid) => env.DB.prepare('INSERT OR REPLACE INTO push_sent (group_id, member_id, at) VALUES (?, ?, ?)').bind(gid, mid, now))
+  for (const e of gone) stmts.push(env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ?').bind(e))
+  if (stmts.length) await env.DB.batch(stmts)
+}
+
 async function deleteGroup(env, gid) {
   let cursor
   do {
@@ -325,6 +415,6 @@ async function deleteGroup(env, gid) {
     if (list.objects.length) await env.PHOTOS.delete(list.objects.map((o) => o.key))
     cursor = list.truncated ? list.cursor : undefined
   } while (cursor)
-  await env.DB.batch(['events', 'invites', 'group_keys', 'members'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE group_id = ?`).bind(gid))
+  await env.DB.batch(['events', 'invites', 'group_keys', 'members', 'push_mutes', 'push_sent'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE group_id = ?`).bind(gid))
     .concat([env.DB.prepare('DELETE FROM groups WHERE id = ?').bind(gid)]))
 }

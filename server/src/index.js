@@ -31,12 +31,12 @@ const SPACE = /^[a-f0-9]{32}$/
 const TOKEN = /^[a-f0-9]{64}$/
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const cors = corsHeaders(req, env)
     const headers = { ...SECURITY_HEADERS, ...cors }
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers })
     try {
-      const res = await route(req, env)
+      const res = await route(req, env, ctx)
       for (const [k, v] of Object.entries(headers)) res.headers.set(k, v)
       return res
     } catch (err) {
@@ -110,12 +110,12 @@ export async function readJson(req, max) {
   }
 }
 
-async function route(req, env) {
+async function route(req, env, ctx) {
   const url = new URL(req.url)
   const p = url.pathname
 
   if (p === '/' || p === '/v1/health') return json({ ok: true, service: 'nekamot-sync' })
-  if (p.startsWith('/v2/')) return groupsRoute(req, env, url)
+  if (p.startsWith('/v2/')) return groupsRoute(req, env, url, ctx)
 
   // Create a space. The phone generates the id and token from a fresh sync code.
   if (p === '/v1/spaces' && req.method === 'POST') {
