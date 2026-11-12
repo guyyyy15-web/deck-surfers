@@ -28,6 +28,13 @@ tests/        node --test unit tests                 scripts/     serve, smoke, 
 docs/         README screenshots, feature specs      game/        Deck Surfers (separate app)
 ```
 
+## Before you start
+
+- **Read `docs/chatzer-handoff.md`** for החצר: current state, product doc links, how the owner (Guy) likes to work,
+  the release loop, cost model, and what is open. Update it when you finish something.
+- Guy writes in Hebrew: answer in Hebrew. When he asks for ideas, propose a short ranked list and **ask before
+  building**; build only what he picked. Send short progress notes on long work.
+
 ## החצר (chatzer/)
 
 A second app in this repo: group coordination (who brings what, chores in turns, polls, chat) for
@@ -91,6 +98,9 @@ npm run smoke:upgrade  # existing users: live version → working copy, data kep
 npm run smoke:groups   # 3 phones in a group through the local Worker, incl. push end to end (full headless Chromium)
 npm run smoke:chatzer  # החצר: 3 phones, event + home yards, race, poll, chat, offline (local Worker)
 node scripts/chatzer-ducks.cjs  # החצר: every duckling look on one sheet (screenshots/chatzer-ducks.png); check by eye after drawing
+node scripts/chatzer-icons.cjs  # החצר: chatzer/icons/icon.svg → the PNG sizes (check apple-touch-icon.png by eye)
+node scripts/chatzer-live.cjs   # החצר: 2 phones on the REAL site after a release; cleans up, prints a query for its test ids
+bash scripts/chatzer-stats.sh   # החצר: read-only usage (people, yards, activity) and free-tier meters
 
 npm run test:all       # everything, one labelled ✅/❌ line per suite (read every line before releasing)
 npm run deploy:server  # migrations + deploy the Worker (needs CLOUDFLARE_* env, see below)
