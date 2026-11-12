@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, CLOTH_COLORS, MOODS, SLOTS, lookOf, legacyAccessory } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.12.0'
+export const APP_VERSION = '0.13.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -252,13 +252,27 @@ async function openFromLink(id, { kind, ref }) {
   }
 }
 
+/**
+ * How often to check for news: quick while things happen (12 s in a yard, 45 s on home), slower and slower while
+ * nothing changes (up to 2 minutes). Anything you do, a notification, or coming back to the app makes it quick again.
+ */
+let pollIdle = 0
+const pollBase = () => (['yard', 'chat', 'team'].includes(view.name) ? 12e3 : 45e3)
+const pollMs = () => Math.min(120e3, pollBase() * 1.6 ** pollIdle)
+function pollSoon() {
+  const wasSlow = pollIdle > 0
+  pollIdle = 0
+  if (wasSlow) schedulePoll()
+}
+for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, pollSoon, { passive: true })
+
 function schedulePoll() {
   clearTimeout(pollTimer)
-  const ms = ['yard', 'chat', 'team'].includes(view.name) ? 12e3 : 45e3
   pollTimer = setTimeout(async () => {
     if (document.visibilityState === 'visible' && navigator.onLine && identity.load()?.keys) {
       try {
         const added = view.id && view.name !== 'join' ? await Y.refresh(view.id) : await Y.refreshAll()
+        pollIdle = added ? 0 : pollIdle + 1
         if (added) await render(true)
       } catch (e) {
         if (e.code === 'removed' && view.id) {
@@ -268,7 +282,7 @@ function schedulePoll() {
       }
     }
     schedulePoll()
-  }, ms)
+  }, pollMs())
 }
 
 // ---------- Welcome (first launch) ----------
@@ -2373,6 +2387,7 @@ window.addEventListener('online', () => {
 })
 window.addEventListener('offline', () => render(true))
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') pollIdle = 0
   if (document.visibilityState === 'visible' && identity.load()?.keys && view.name !== 'join') {
     ;(view.id ? Y.refresh(view.id) : Y.refreshAll()).then((n) => n && render(true)).catch(() => undefined)
   }
@@ -2383,6 +2398,12 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => undefined)
   navigator.serviceWorker.addEventListener('message', (e) => {
     if (e.data?.nav) location.hash = e.data.nav
+    // A notification arrived while the app is open: fetch that yard now, instead of waiting for the next check.
+    if (e.data?.news && identity.load()?.keys) {
+      pollIdle = 0
+      const yid = /^[\w-]+$/.test(e.data.news) ? e.data.news : null
+      ;(yid ? Y.refresh(yid) : Y.refreshAll()).then((n) => n && render(true)).catch(() => undefined)
+    }
   })
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (hadController) toast('גרסה חדשה של החצר מוכנה', { label: 'רענון', run: () => location.reload() })

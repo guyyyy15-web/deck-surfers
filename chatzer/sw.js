@@ -1,6 +1,6 @@
 // Offline: every file the app needs is cached on install. Bump VERSION (and APP_VERSION in js/app.js) on
 // every change; tests/chatzer.test.mjs checks that every file is listed here.
-const VERSION = 'chatzer-v0.12.0'
+const VERSION = 'chatzer-v0.13.0'
 const CACHE = `chatzer:${VERSION}`
 // The shell is cached as './' only: Cloudflare Pages answers /index.html with a redirect to /, and a page can't be
 // opened from a redirected response (the installed app would fail to start).
@@ -110,6 +110,8 @@ self.addEventListener('push', (e) => {
       } catch { /* generic text */ }
     }
     if (self.navigator.setAppBadge) self.navigator.setAppBadge().catch(() => undefined)
+    // An open app fetches the news right away (it checks less often while nothing happens).
+    for (const w of await self.clients.matchAll({ type: 'window' })) w.postMessage({ news: msg.g || true })
     await self.registration.showNotification(title, {
       body, tag: msg.g || 'chatzer', renotify: true, lang: 'he', dir: 'rtl',
       icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { hash },

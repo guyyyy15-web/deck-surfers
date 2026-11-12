@@ -605,11 +605,22 @@ const rawKey = (rec, v) => (rec.keys[v] ? unb64(rec.keys[v]) : null)
 const currentKey = (rec) => rawKey(rec, rec.keyVersion)
 export const rolesOf = (rec) => new Map((rec.members || []).map((m) => [m.id, m.role]))
 /** The yard as this phone sees it: what the server has, plus what is still waiting to be sent (shown at once). */
+/**
+ * The yard folded from its log (plus what waits in the outbox). Kept per yard until the log, the outbox or the
+ * member list change, so a screen can ask for it many times without redoing the work. Treat it as read-only.
+ */
+const folded = new Map()
 export function stateOf(rec) {
   const mine = identity.myId()
   const last = rec.events.at(-1)?.seq || 0
-  const waiting = (rec.outbox || []).map((ev, i) => ({ seq: last + 1 + i, author: mine, at: ev.at, ev }))
-  return fold(waiting.length ? [...rec.events, ...waiting] : rec.events, rolesOf(rec))
+  const out = rec.outbox || []
+  const key = `${mine}|${rec.events.length}|${last}|${out.length}|${out.at(-1)?.at || ''}|${(rec.members || []).map((m) => m.id + m.role).join()}`
+  const hit = folded.get(rec.id)
+  if (hit && hit.key === key) return hit.state
+  const waiting = out.map((ev, i) => ({ seq: last + 1 + i, author: mine, at: ev.at, ev }))
+  const state = fold(waiting.length ? [...rec.events, ...waiting] : rec.events, rolesOf(rec))
+  folded.set(rec.id, { key, state })
+  return state
 }
 
 export async function localYards() {
@@ -692,9 +703,33 @@ async function flush(yid) {
 }
 
 /** Members, keys, key rotation if someone left, then new events. Returns how many events arrived. */
-export async function refresh(yid) {
+const INFO_MAX_AGE = 10 * 60e3
+
+/**
+ * Brings one yard up to date. Usually one request: the new events (the answer also says whether the members or
+ * the keys changed). The full yard info (members, keys) is reloaded only when those changed, every 10 minutes,
+ * or with `full`.
+ */
+export async function refresh(yid, { full = false } = {}) {
   await register()
-  const { keys, profile } = me()
+  const known = await db.getYard(yid)
+  if (!full && known && !known.removed && known.keys?.[known.keyVersion] && known.mv && Date.now() - (known.infoAt || 0) < INFO_MAX_AGE) {
+    try {
+      await flush(yid).catch(() => undefined)
+      const { added, meta } = await pull(yid)
+      if (meta && meta.mv === known.mv && meta.keyVersion === known.keyVersion && !meta.needsRotation) {
+        await afterRefresh(yid, false)
+        return added
+      }
+    } catch (e) {
+      if (e.status !== 403 && e.status !== 404) throw e
+    }
+  }
+  return fullRefresh(yid)
+}
+
+async function fullRefresh(yid) {
+  const { keys } = me()
   let info
   try {
     info = await api('GET', `/v2/groups/${yid}`)
@@ -715,10 +750,18 @@ export async function refresh(yid) {
   rec.members = info.members
   for (const k of info.keys) if (!rec.keys[k.version]) rec.keys[k.version] = b64(await unwrap(keys, k.wrapped))
   rec.keyVersion = info.keyVersion
+  rec.mv = info.mv || null
+  rec.infoAt = Date.now()
   await db.putYard(rec)
   if (info.needsRotation) await rotate(yid).catch(() => undefined)
   await flush(yid).catch(() => undefined)
-  const added = await pull(yid)
+  const { added } = await pull(yid)
+  await afterRefresh(yid, fresh)
+  return added
+}
+
+async function afterRefresh(yid, fresh) {
+  const { keys, profile } = me()
   if (fresh) await markSeen(yid)
   syncReminders(yid).catch(() => undefined) // sends only what changed (the morning summary moves on each day)
   // Make sure the others know who I am (once, and again after I change my duckling).
@@ -728,14 +771,15 @@ export async function refresh(yid) {
   if (profile && (!mine || ['nickname', 'voice', 'morning', ...identity.LOOK_KEYS].some((k) => mine[k] !== want[k]))) {
     await post(yid, [{ t: 'member.profile', ...want }], mine ? null : { body: `🐥 ${profile.nickname} בחצר!` })
   }
-  return added
 }
 
 async function pull(yid) {
   let added = 0
+  let meta = null
   for (;;) {
     const cur = await db.getYard(yid)
     const page = await api('GET', `/v2/groups/${yid}/events?since=${cur.since}`)
+    meta = { mv: page.mv, keyVersion: page.keyVersion, needsRotation: page.needsRotation }
     for (const e of page.events) {
       if (e.seq <= cur.since) continue
       const raw = rawKey(cur, e.key_version)
@@ -748,7 +792,7 @@ async function pull(yid) {
     await db.putYard(cur)
     if (!page.more) break
   }
-  return added
+  return { added, meta }
 }
 
 async function rotate(yid) {
@@ -776,7 +820,15 @@ export async function refreshAll() {
       added++
     }
   }
-  for (const g of remote) added += await refresh(g.id).catch(() => 0)
+  for (const g of remote) {
+    const rec = await db.getYard(g.id)
+    const same = rec && !rec.removed && rec.since === g.seq && rec.keyVersion === g.keyVersion && rec.role === g.role && !g.needsRotation && !rec.outbox?.length
+    if (same && Date.now() - (rec.infoAt || 0) < INFO_MAX_AGE) {
+      syncReminders(g.id).catch(() => undefined) // nothing new, but the morning summary still moves on each day
+      continue
+    }
+    added += await refresh(g.id).catch(() => 0)
+  }
   return added
 }
 

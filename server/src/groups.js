@@ -278,7 +278,7 @@ export async function groupsRoute(req, env, url, ctx) {
       .all()
     const muted = !!(await env.DB.prepare('SELECT 1 AS x FROM push_mutes WHERE group_id = ? AND member_id = ?').bind(gid, me).first('x'))
     return json({
-      id: gid, keyVersion: group.key_version, needsRotation: !!group.needs_rotation, seq: group.seq, role, muted,
+      id: gid, keyVersion: group.key_version, needsRotation: !!group.needs_rotation, seq: group.seq, role, muted, mv: await membersVersion(env, gid),
       // push: whether this member gets notifications at all (so whoever runs the yard knows who will see reminders)
       members: members.map((x) => ({ id: x.id, role: x.role, joinedAt: x.joined_at, dhPub: JSON.parse(x.dh_pub), push: !!x.push })),
       keys,
@@ -294,13 +294,14 @@ export async function groupsRoute(req, env, url, ctx) {
 
   if (rest === '/events' && m === 'GET') {
     const since = Math.max(0, Number(url.searchParams.get('since')) || 0)
+    const mv = await membersVersion(env, gid)
     const { results } = await env.DB.prepare(
       'SELECT seq, author_id, key_version, data, created_at FROM events WHERE group_id = ? AND seq > ? ORDER BY seq LIMIT 500',
     )
       .bind(gid, since)
       .all()
     return json({ events: results, seq: results.length ? results[results.length - 1].seq : since, more: results.length === 500,
-      keyVersion: group.key_version, needsRotation: !!group.needs_rotation })
+      keyVersion: group.key_version, needsRotation: !!group.needs_rotation, mv })
   }
 
   if (rest === '/events' && m === 'POST') {
@@ -507,6 +508,15 @@ async function deleteGroup(env, gid) {
   } while (cursor)
   await env.DB.batch(['events', 'invites', 'group_keys', 'members', 'push_mutes', 'push_sent', 'reminders'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE group_id = ?`).bind(gid))
     .concat([env.DB.prepare('DELETE FROM groups WHERE id = ?').bind(gid)]))
+}
+
+/**
+ * Changes whenever someone joins, leaves or is removed. Phones reload the member list (and keys) only when it
+ * changes, instead of on every check.
+ */
+async function membersVersion(env, gid) {
+  const r = await env.DB.prepare('SELECT COUNT(*) AS n, MAX(joined_at) AS j, MAX(COALESCE(removed_at, 0)) AS x FROM members WHERE group_id = ?').bind(gid).first()
+  return `${r?.n || 0}.${r?.j || 0}.${r?.x || 0}`
 }
 
 /** Cron: sends the reminders that are due (once each), then forgets them. Very old ones are dropped unsent. */
