@@ -85,6 +85,8 @@ export const EVERY = {
   day: { label: 'כל יום', days: 1 },
   '2days': { label: 'כל יומיים', days: 2 },
   week: { label: 'כל שבוע', days: 7 },
+  '2weeks': { label: 'כל שבועיים', days: 14 },
+  month: { label: 'כל חודש', days: 30 },
 }
 const str = (v, n) => String(v ?? '').trim().slice(0, n)
 

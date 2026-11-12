@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, ACCESSORIES } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.3.1'
+export const APP_VERSION = '0.4.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -23,6 +23,7 @@ const ICON = {
   plus: '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   dots: '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="19" cy="12" r="2.2"/></svg>',
   camera: '<svg aria-hidden="true" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+  x: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   send: '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4L3 11l7 3 3 7z"/></svg>',
 }
 
@@ -84,6 +85,7 @@ const dueText = (c) => {
   if (c.due === 'today') return 'היום'
   const days = Math.round((c.dueAt - new Date().setHours(0, 0, 0, 0)) / 86400e3)
   if (days === 1) return 'מחר'
+  if (days > 6) return `ב־${new Intl.DateTimeFormat('he-IL', { day: 'numeric', month: 'long' }).format(new Date(c.dueAt))}`
   return `ביום ${new Intl.DateTimeFormat('he-IL', { weekday: 'long' }).format(new Date(c.dueAt)).replace('יום ', '')}`
 }
 const count = (n, one, many) => (n === 1 ? one : `${n} ${many}`)
@@ -113,7 +115,8 @@ function openSheet(html, bind) {
   closeSheetNow()
   const wrap = document.createElement('div')
   wrap.className = 'sheet-wrap'
-  wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grip" aria-hidden="true"></div>${html}</div>`
+  wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><button type="button" class="sheet-x" aria-label="סגירה"><span>${ICON.x}</span></button><div class="grip" aria-hidden="true"></div>${html}</div>`
+  wrap.querySelector('.sheet-x').onclick = () => closeSheet()
   wrap.addEventListener('click', (e) => {
     if (e.target === wrap) closeSheet()
   })
@@ -229,7 +232,15 @@ const demoParade = () => parade([
 ])
 
 /** The duckling form: name, color, accessory, and how the app speaks to you. */
-function duckForm(p = {}, { compact = false } = {}) {
+const PETS = [
+  { id: 'none', label: 'אין' },
+  { id: 'dog', label: 'כלב 🐕' },
+  { id: 'cat', label: 'חתול 🐈' },
+  { id: 'other', label: 'אחר 🐾' },
+]
+const hasPet = () => !!settings.pet && settings.pet !== 'none'
+
+function duckForm(p = {}, { compact = false, pets = false } = {}) {
   const color = p.color || 'sun'
   const acc = p.accessory || 'none'
   return `
@@ -239,12 +250,15 @@ function duckForm(p = {}, { compact = false } = {}) {
     <div class="swatches" role="group" aria-labelledby="clr-l">${DUCK_COLORS.map((c) => `<button type="button" class="swatch" data-color="${c.id}" aria-label="${c.label}" aria-pressed="${c.id === color}" style="background:${c.fill}"></button>`).join('')}</div>
     ${compact ? `<input type="hidden" id="acc" value="${esc(acc)}">` : `
     <span class="lbl" id="acc-l">ואיזה אביזר?</span>
-    <div class="choices" role="group" aria-labelledby="acc-l">${ACCESSORIES.map((a) => `<button type="button" class="choice" data-acc="${a.id}" aria-pressed="${a.id === acc}">${a.label}</button>`).join('')}</div>`}
-    <span class="lbl" id="voice-l">איך לפנות אלייך?</span>
+    <div class="choices" role="group" aria-labelledby="acc-l">${ACCESSORIES.map((a) => `<button type="button" class="choice" data-acc="${a.id}" aria-pressed="${a.id === acc}">${duck({ color, accessory: a.id }, 30)}${a.label}</button>`).join('')}</div>`}
+    <span class="lbl" id="voice-l">איך לפנות אלייך? אני…</span>
     <div class="choices" role="group" aria-labelledby="voice-l">
-      <button type="button" class="choice" data-voice="f" aria-pressed="${settings.voice !== 'm'}">בלשון נקבה</button>
-      <button type="button" class="choice" data-voice="m" aria-pressed="${settings.voice === 'm'}">בלשון זכר</button>
-    </div>`
+      <button type="button" class="choice" data-voice="f" aria-pressed="${settings.voice !== 'm'}">אישה</button>
+      <button type="button" class="choice" data-voice="m" aria-pressed="${settings.voice === 'm'}">גבר</button>
+    </div>
+    ${pets ? `<span class="lbl" id="pet-l">יש בעל חיים בבית?</span>
+    <div class="choices" role="group" aria-labelledby="pet-l">${PETS.map((x) => `<button type="button" class="choice" data-pet="${x.id}" aria-pressed="${(settings.pet || 'none') === x.id}">${x.label}</button>`).join('')}</div>
+    <p class="small muted" style="margin:4px 0 0">ככה נציע גם מטלות כמו טיול עם הכלב.</p>` : ''}`
 }
 function bindDuckForm(root, onChange = () => undefined) {
   const state = {
@@ -267,6 +281,11 @@ function bindDuckForm(root, onChange = () => undefined) {
     settings = { ...settings, voice: b.dataset.voice }
     db.saveSettings(settings)
   }))
+  root.querySelectorAll('[data-pet]').forEach((b) => (b.onclick = () => {
+    press('[data-pet]', b)
+    settings = { ...settings, pet: b.dataset.pet }
+    db.saveSettings(settings)
+  }))
   return () => ({ nickname: root.querySelector('#nick').value, color: state.color, accessory: state.accessory })
 }
 
@@ -277,7 +296,7 @@ function welcome() {
     <h1>${g('ברוכה הבאה', 'ברוך הבא')} לחצר</h1>
     <p class="lead">מנגל, ארוחת שישי, יום הולדת או מטלות הבית: כולם רואים מה חסר, לוקחים בלחיצה, ואף אחד לא שוכח.</p>
     ${demoParade()}
-    <form class="panel" id="f" novalidate>${duckForm({}, { compact: true })}<p class="err" id="err" role="alert"></p>
+    <form class="panel" id="f" novalidate>${duckForm({}, { compact: true, pets: true })}<p class="err" id="err" role="alert"></p>
 <label class="choice" style="margin-top:12px;width:100%;justify-content:flex-start;gap:10px;padding:10px 14px;border-radius:16px;min-height:52px">
         <input type="checkbox" id="age" style="width:22px;height:22px;flex:none;accent-color:var(--green)">
         <span style="font-size:14px;line-height:20px">${g('אני בת 13 ומעלה ומסכימה', 'אני בן 13 ומעלה ומסכים')} ל<button type="button" class="link-btn" data-privacy style="min-height:auto;padding:0;font-size:14px">מדיניות הפרטיות</button></span></label>
@@ -527,13 +546,32 @@ const TEMPLATES = {
   picnic: { label: 'פיקניק', emoji: '🧺', items: ['שמיכה', 'סנדוויצ׳ים', 'פירות', 'שתייה', 'צידנית וקרח', 'משחק', 'שקיות זבל'] },
   none: { label: 'רשימה ריקה', emoji: '🎉', items: [] },
 }
+// Ideas for chores in turns. `on`: picked by default in a new home yard; `pet`: only shown to people with that pet
+// ('any' = any pet).
 const CHORE_STARTERS = [
-  { name: 'שטיפת כלים', emoji: '🫧', every: 'day' },
-  { name: 'להוריד את הזבל', emoji: '🗑️', every: '2days' },
-  { name: 'ניקיון סלון', emoji: '🧹', every: 'week' },
-  { name: 'ניקיון שירותים', emoji: '🚽', every: 'week' },
+  { name: 'שטיפת כלים', emoji: '🫧', every: 'day', on: true },
+  { name: 'להוריד את הזבל', emoji: '🗑️', every: '2days', on: true },
+  { name: 'ניקיון סלון', emoji: '🧹', every: 'week', on: true },
+  { name: 'ניקיון שירותים ואמבטיה', emoji: '🛁', every: 'week' },
+  { name: 'שטיפת רצפה', emoji: '🧽', every: 'week' },
+  { name: 'שאיבת אבק', emoji: '🌀', every: 'week' },
+  { name: 'ניקוי המטבח (משטחים וכיריים)', emoji: '🍽️', every: '2days' },
+  { name: 'בישול ארוחת ערב', emoji: '🍳', every: 'day' },
   { name: 'קניות לבית', emoji: '🛒', every: 'week' },
+  { name: 'כביסה', emoji: '🧺', every: 'week' },
+  { name: 'קיפול וסידור כביסה', emoji: '👕', every: 'week' },
+  { name: 'החלפת מצעים', emoji: '🛏️', every: '2weeks' },
+  { name: 'ניקוי חלונות', emoji: '🪟', every: 'month' },
+  { name: 'ניקוי המקרר', emoji: '🧊', every: 'month' },
+  { name: 'השקיית עציצים', emoji: '🪴', every: 'week' },
+  { name: 'טיול עם הכלב', emoji: '🐕', every: 'day', pet: 'dog' },
+  { name: 'ניקוי ארגז החול', emoji: '🐈', every: '2days', pet: 'cat' },
+  { name: 'האכלת בעלי החיים', emoji: '🦴', every: 'day', pet: 'any' },
+  { name: 'מים טריים לחיות', emoji: '💧', every: 'day', pet: 'any' },
 ]
+/** The ideas this person should see: pet chores only with a matching pet. */
+const choreIdeas = () => CHORE_STARTERS.filter((c) => !c.pet || (hasPet() && (c.pet === 'any' || c.pet === settings.pet || settings.pet === 'other')))
+const everyOptions = (sel = 'week') => Object.entries(Y.EVERY).map(([k, v]) => `<option value="${k}"${k === sel ? ' selected' : ''}>${v.label}</option>`).join('')
 const EVENT_EMOJI = ['🔥', '🎂', '🍷', '🧺', '🎉', '🏖️', '🎄', '🥳']
 const HOME_EMOJI = ['🏡', '🏠', '🛋️', '🧹', '🪴', '🐕']
 
@@ -560,12 +598,22 @@ function newYardSheet() {
         <label class="lbl" for="where">איפה? (לא חובה)</label>
         <input class="input" id="where" maxlength="60" placeholder="למשל: רמת גן">
         <span class="lbl" id="emo-l">אימוג׳י</span>
-        <div class="choices" role="group" aria-labelledby="emo-l">${EVENT_EMOJI.map((e, i) => `<button type="button" class="choice" data-emo="${e}" aria-pressed="${i === 0}" aria-label="${e}">${e}</button>`).join('')}</div>`
+        <div class="choices" role="group" aria-labelledby="emo-l">${EVENT_EMOJI.map((e, i) => `<button type="button" class="choice" data-emo="${e}" aria-pressed="${i === 0}" aria-label="${e}">${e}</button>`).join('')}</div>
+        <label class="lbl" for="citem">עוד משהו לרשימה? (אפשר גם אחר כך)</label>
+        <div class="add-row" style="margin-top:0"><input class="input" id="citem" maxlength="60" placeholder="למשל: קרח, מחצלות" autocomplete="off" enterkeyhint="done">
+          <button class="add-btn" id="citem-add" type="button" aria-label="הוספה לרשימה">${ICON.plus}</button></div>
+        <div class="choices" id="citems" style="margin-top:8px"></div>`
         : `
         <label class="lbl" for="yname">איך קוראים לחצר?</label>
         <input class="input" id="yname" maxlength="30" placeholder="למשל: הדירה בפלורנטין">
-        <span class="lbl" id="ch-l">מטלות בתורות (אפשר לשנות אחר כך)</span>
-        <div class="choices" role="group" aria-labelledby="ch-l">${CHORE_STARTERS.map((c, i) => `<button type="button" class="choice" data-chore="${i}" aria-pressed="${i < 3}">${c.emoji} ${c.name}</button>`).join('')}</div>
+        <span class="lbl" id="ch-l">מטלות בתורות (בוחרים כמה שרוצים, אפשר לשנות אחר כך)</span>
+        <div class="choices" role="group" aria-labelledby="ch-l">${choreIdeas().map((c) => `<button type="button" class="choice" data-chore="${CHORE_STARTERS.indexOf(c)}" aria-pressed="${!!c.on}">${c.emoji} ${c.name}</button>`).join('')}</div>
+        ${hasPet() ? '' : '<p class="small muted" style="margin:6px 0 0">יש בעל חיים? אפשר לציין במסך "הברווזון שלי", ונציע גם מטלות כמו טיול עם הכלב.</p>'}
+        <label class="lbl" for="cchore">מטלה משלך</label>
+        <div class="add-row" style="margin-top:0"><input class="input" id="cchore" maxlength="40" placeholder="למשל: להאכיל את הדגים" autocomplete="off" enterkeyhint="done">
+          <label class="sr" for="cevery">כל כמה זמן</label><select class="input" id="cevery" style="flex:0 0 auto;width:auto;padding:0 10px">${everyOptions('week')}</select>
+          <button class="add-btn" id="cchore-add" type="button" aria-label="הוספת מטלה">${ICON.plus}</button></div>
+        <div class="choices" id="cchores" style="margin-top:8px"></div>
         <span class="lbl" id="emo-l">אימוג׳י</span>
         <div class="choices" role="group" aria-labelledby="emo-l">${HOME_EMOJI.map((e, i) => `<button type="button" class="choice" data-emo="${e}" aria-pressed="${i === 0}" aria-label="${e}">${e}</button>`).join('')}</div>`
       form.insertAdjacentHTML('beforeend', '<p class="err" id="err" role="alert"></p><button class="btn btn-primary btn-wide" type="submit">פותחים חצר! 🐥</button>')
@@ -578,6 +626,38 @@ function newYardSheet() {
         if (em) form.querySelectorAll('[data-emo]').forEach((y) => y.setAttribute('aria-pressed', String(y === em)))
       }))
       form.querySelectorAll('[data-chore]').forEach((x) => (x.onclick = () => x.setAttribute('aria-pressed', String(x.getAttribute('aria-pressed') !== 'true'))))
+      // Own chores / items: each becomes a picked chip (tap to drop it). Enter adds instead of submitting.
+      const addOwn = (inputSel, listSel, make) => {
+        const input = form.querySelector(inputSel)
+        if (!input) return
+        const add = () => {
+          const name = input.value.trim()
+          if (name.length < 2) return input.focus()
+          const chip = document.createElement('button')
+          chip.type = 'button'
+          chip.className = 'choice'
+          chip.setAttribute('aria-pressed', 'true')
+          const data = make(name)
+          chip.dataset.own = JSON.stringify(data)
+          chip.textContent = data.label
+          chip.onclick = () => chip.setAttribute('aria-pressed', String(chip.getAttribute('aria-pressed') !== 'true'))
+          form.querySelector(listSel).append(chip)
+          input.value = ''
+          input.focus()
+        }
+        form.querySelector(`${inputSel}-add`).onclick = add
+        input.onkeydown = (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            add()
+          }
+        }
+      }
+      addOwn('#cchore', '#cchores', (name) => {
+        const every = form.querySelector('#cevery').value
+        return { kind: 'chore', name, every, label: `✨ ${name} · ${Y.EVERY[every].label}` }
+      })
+      addOwn('#citem', '#citems', (name) => ({ kind: 'item', name, label: name }))
       form.querySelector('#yname').focus()
     }))
     form.onsubmit = async (e) => {
@@ -591,13 +671,18 @@ function newYardSheet() {
         const when = form.querySelector('#when').value
         meta = { name, emoji, kind, when: when || null, where: form.querySelector('#where').value.trim() }
         const tpl = TEMPLATES[form.querySelector('[data-tpl][aria-pressed="true"]')?.dataset.tpl || 'none']
-        starters = tpl.items.map((n) => ({ t: 'item.put', id: Y.newId('t'), name: n }))
+        const own = [...form.querySelectorAll('[data-own][aria-pressed="true"]')].map((x) => JSON.parse(x.dataset.own).name)
+        starters = [...tpl.items, ...own].map((n) => ({ t: 'item.put', id: Y.newId('t'), name: n }))
       } else {
         meta = { name, emoji, kind }
         starters = [...form.querySelectorAll('[data-chore][aria-pressed="true"]')].map((x) => {
-          const c = CHORE_STARTERS[Number(x.dataset.chore)]
-          return { t: 'chore.put', id: Y.newId('c'), ...c, everyone: true }
+          const { name, emoji, every } = CHORE_STARTERS[Number(x.dataset.chore)]
+          return { t: 'chore.put', id: Y.newId('c'), name, emoji, every, everyone: true }
         })
+        for (const x of form.querySelectorAll('[data-own][aria-pressed="true"]')) {
+          const o = JSON.parse(x.dataset.own)
+          starters.push({ t: 'chore.put', id: Y.newId('c'), name: o.name, emoji: '✨', every: o.every, everyone: true })
+        }
       }
       const btn = form.querySelector('[type="submit"]')
       busy(btn, true, 'פותחת את החצר…')
@@ -1077,17 +1162,21 @@ async function reportsSheet(id) {
   })
 }
 
-const CHORE_EMOJI = ['🫧', '🗑️', '🧹', '🚽', '🛒', '🧺', '🪴', '🐕', '🍳', '🛁']
+const CHORE_EMOJI = ['✨', ...new Set(CHORE_STARTERS.map((c) => c.emoji))]
 
 async function newChoreSheet(id) {
   const rec = await Y.localYard(id)
   const st = Y.stateOf(rec)
   const members = (rec.members || []).map((m) => m.id)
   let picked = []
+  const have = new Set([...st.chores.values()].map((c) => c.name))
+  const ideas = choreIdeas().filter((c) => !have.has(c.name))
   openSheet(`<h2>מטלה קבועה</h2>
     <form id="f" novalidate>
-      <label class="lbl" for="cname">מה צריך לעשות?</label>
-      <input class="input" id="cname" maxlength="40" placeholder="למשל: שטיפת כלים">
+      ${ideas.length ? `<span class="lbl" id="idea-l">רעיונות (לוחצים וזה מתמלא)</span>
+      <div class="choices" role="group" aria-labelledby="idea-l">${ideas.map((c) => `<button type="button" class="choice" data-idea="${CHORE_STARTERS.indexOf(c)}" aria-pressed="false">${c.emoji} ${c.name}</button>`).join('')}</div>` : ''}
+      <label class="lbl" for="cname">מה צריך לעשות? (אפשר לכתוב כל דבר)</label>
+      <input class="input" id="cname" maxlength="40" placeholder="למשל: להאכיל את הדגים">
       <span class="lbl" id="ce-l">אימוג׳י</span>
       <div class="choices" role="group" aria-labelledby="ce-l">${CHORE_EMOJI.map((e, i) => `<button type="button" class="choice" data-emo="${e}" aria-pressed="${i === 0}" aria-label="${e}">${e}</button>`).join('')}</div>
       <span class="lbl" id="ev-l">כל כמה זמן?</span>
@@ -1103,6 +1192,13 @@ async function newChoreSheet(id) {
     const single = (sel) => f.querySelectorAll(sel).forEach((x) => (x.onclick = () => f.querySelectorAll(sel).forEach((y) => y.setAttribute('aria-pressed', String(y === x)))))
     single('[data-emo]')
     single('[data-every]')
+    f.querySelectorAll('[data-idea]').forEach((b) => b.addEventListener('click', () => {
+      const c = CHORE_STARTERS[Number(b.dataset.idea)]
+      f.querySelectorAll('[data-idea]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
+      f.querySelector('#cname').value = c.name
+      f.querySelectorAll('[data-emo]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.emo === c.emoji)))
+      f.querySelectorAll('[data-every]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.every === c.every)))
+    }))
     const all = f.querySelector('#all')
     all.onclick = () => {
       const on = all.getAttribute('aria-pressed') !== 'true'
@@ -1510,7 +1606,7 @@ function meScreen() {
     <header class="top"><a class="icon-btn" href="#/" aria-label="חזרה">${ICON.back}</a><h1>הברווזון שלי</h1></header>
     <div style="display:flex;justify-content:center;margin-top:8px" id="preview">${duck(p, 120)}</div>
     <div id="save">${saveCard()}</div>
-    <form id="f" novalidate>${duckForm(p)}<p class="err" id="err" role="alert"></p>
+    <form id="f" novalidate>${duckForm(p, { pets: true })}<p class="err" id="err" role="alert"></p>
       <button class="btn btn-primary btn-wide" type="submit">שמירה</button></form>
     <h2 class="section">התראות</h2>${pushRow}
     <h2 class="section">יש לי קישור</h2>

@@ -198,7 +198,13 @@ textarea.input { padding: 12px 16px; min-height: 96px; resize: vertical; }
 /* Sheets */
 .sheet-wrap { position: fixed; inset: 0; z-index: 30; display: flex; align-items: flex-end; justify-content: center; background: var(--scrim); animation: fade .15s; }
 .sheet { width: 100%; max-width: 560px; max-height: 92dvh; overflow: auto; background: var(--bg); border-radius: 26px 26px 0 0; padding: 10px 20px calc(var(--safe-bottom) + 24px); animation: up .2s ease-out; overscroll-behavior: contain; }
+.sheet { position: relative; }
 .sheet .grip { width: 44px; height: 5px; border-radius: 999px; background: var(--line); margin: 0 auto 10px; }
+.sheet > h2 { padding-inline-end: 48px; }
+/* Close: small, but always in the same corner, with a full-size tap target. */
+/* Sticky + floated to the end (left in RTL): it stays in the corner while a long sheet scrolls. */
+.sheet-x { position: sticky; top: 0; float: left; margin: -2px -10px -44px 0; width: 44px; height: 44px; padding: 0; border: 0; background: none; display: grid; place-items: center; color: var(--ink); cursor: pointer; z-index: 2; }
+.sheet-x span { width: 32px; height: 32px; border-radius: 999px; background: var(--surface); box-shadow: 0 1px 4px rgba(80, 60, 20, 0.12); border: 1px solid var(--line); display: grid; place-items: center; }
 .sheet h2 { margin: 4px 0 4px; font-family: var(--font-display); font-size: 23px; font-weight: 700; overflow-wrap: anywhere; }
 .sheet .stack { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
 @keyframes up { from { transform: translateY(40px); opacity: .5; } }

@@ -181,3 +181,15 @@ test('reports reach the admin; deleting the message or hiding the photo settles 
   s = fold([...evs, e(B, { t: 'report.close', rid: 'r1' })], roles)
   assert.equal(openReports(s).length, 2, 'only an admin dismisses a report')
 })
+
+test('longer cycles: every two weeks and monthly chores come due after 14 and 30 days', () => {
+  const now = Date.parse('2026-11-11T12:00:00')
+  const base = { createdAt: '2026-10-01T10:00:00' }
+  assert.equal(dueState({ ...base, every: '2weeks', lastDoneAt: '2026-11-01T09:00:00' }, now), 'soon')
+  assert.equal(dueState({ ...base, every: '2weeks', lastDoneAt: '2026-10-28T09:00:00' }, now), 'today')
+  assert.equal(dueState({ ...base, every: 'month', lastDoneAt: '2026-10-20T09:00:00' }, now), 'soon')
+  assert.equal(dueState({ ...base, every: 'month', lastDoneAt: '2026-10-01T09:00:00' }, now), 'late')
+  // An unknown cycle (say, from a newer app) falls back to weekly.
+  const st = fold([e(A, { t: 'chore.put', id: 'c8', name: 'x', every: 'yearly', everyone: true })], roles)
+  assert.equal(st.chores.get('c8').every, 'week')
+})

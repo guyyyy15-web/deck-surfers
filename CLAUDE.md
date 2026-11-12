@@ -90,6 +90,7 @@ npm run smoke:sync     # 2–4 phones syncing through the local Worker
 npm run smoke:upgrade  # existing users: live version → working copy, data kept, update toast
 npm run smoke:groups   # 3 phones in a group through the local Worker, incl. push end to end (full headless Chromium)
 npm run smoke:chatzer  # החצר: 3 phones, event + home yards, race, poll, chat, offline (local Worker)
+node scripts/chatzer-ducks.cjs  # החצר: every duckling look on one sheet (screenshots/chatzer-ducks.png); check by eye after drawing
 
 npm run test:all       # everything, one labelled ✅/❌ line per suite (read every line before releasing)
 npm run deploy:server  # migrations + deploy the Worker (needs CLOUDFLARE_* env, see below)
