@@ -89,6 +89,9 @@ export const EVERY = {
   month: { label: 'כל חודש', days: 30 },
 }
 const str = (v, n) => String(v ?? '').trim().slice(0, n)
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
+/** A local date-time from <input type="datetime-local"> ("2026-11-20T18:30"), or null. */
+const localDateTime = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) ? v : null)
 
 /**
  * Folds a yard's events into its state. `events`: [{ seq, author, at, ev }] in seq order.
@@ -125,7 +128,7 @@ export function fold(events, roles = new Map()) {
         const name = str(ev.name, 60)
         if (!name) break
         const base = it || { id: ev.id, createdBy: author, createdAt: at, claimedBy: null, claimedAt: null, done: false, doneBy: null, doneAt: null, photoId: null }
-        s.items.set(ev.id, { ...base, name, qty: str(ev.qty, 20) })
+        s.items.set(ev.id, { ...base, name, qty: str(ev.qty, 20), due: localDateTime(ev.due) })
         break
       }
       case 'item.delete': {
@@ -139,6 +142,14 @@ export function fold(events, roles = new Map()) {
         // First one in the log wins; only the one who took it (or an admin) can let it go.
         if (ev.on && !it.claimedBy) Object.assign(it, { claimedBy: author, claimedAt: at })
         else if (!ev.on && (it.claimedBy === author || isAdmin(author))) Object.assign(it, { claimedBy: null, claimedAt: null })
+        break
+      }
+      case 'item.assign': {
+        // Whoever runs the yard can give a task to someone (or free it), whoever had it.
+        const it = s.items.get(ev.id)
+        if (!it || it.done || !isAdmin(author)) break
+        if (ev.to === null) Object.assign(it, { claimedBy: null, claimedAt: null })
+        else if (typeof ev.to === 'string' && (!roles.size || roles.has(ev.to))) Object.assign(it, { claimedBy: ev.to, claimedAt: at, assignedBy: author })
         break
       }
       case 'item.done': {
@@ -160,8 +171,10 @@ export function fold(events, roles = new Map()) {
         const order = everyone ? [] : Array.isArray(ev.order) ? [...new Set(ev.order.filter((m) => typeof m === 'string'))].slice(0, MAX_MEMBERS) : []
         if (!name || (!everyone && !order.length)) break
         const base = c || { id: ev.id, createdBy: author, createdAt: at, turnOf: everyone ? author : order[0], lastDoneAt: null, history: [] }
-        const next = { ...base, name, emoji: str(ev.emoji, 8) || '✨', every: EVERY[ev.every] ? ev.every : 'week', everyone, order }
-        if (!everyone && !order.includes(next.turnOf)) next.turnOf = order[0]
+        const next = { ...base, name, emoji: str(ev.emoji, 8) || '✨', every: EVERY[ev.every] ? ev.every : 'week', everyone, order, time: TIME.test(ev.time || '') ? ev.time : null }
+        // A new chore starts with the first in its rotation. An edit keeps the current turn, unless that person
+        // is no longer part of a chosen rotation (and the turn wasn't handed to them by an admin).
+        if (!everyone && !order.includes(next.turnOf) && (!c || !c.slot)) next.turnOf = order[0]
         s.chores.set(ev.id, next)
         break
       }
@@ -170,19 +183,32 @@ export function fold(events, roles = new Map()) {
         if (c && (c.createdBy === author || isAdmin(author))) s.chores.delete(ev.id)
         break
       }
+      case 'chore.assign': {
+        // Whoever runs the yard can hand this turn to anyone, even against the rotation. They stand in for the
+        // turn's owner (`slot`): once it's done, the rotation goes on after the owner, as if nothing happened.
+        const c = s.chores.get(ev.id)
+        if (!c || !isAdmin(author) || typeof ev.to !== 'string' || (roles.size && !roles.has(ev.to))) break
+        if (!c.slot) c.slot = c.turnOf
+        if (ev.to === c.slot) c.slot = null
+        c.history = [{ by: author, at, kind: 'assign', to: ev.to }, ...c.history].slice(0, 30)
+        c.turnOf = ev.to
+        break
+      }
       case 'chore.done': {
         const c = s.chores.get(ev.id)
         if (!c) break
         c.history = [{ by: author, at, photoId: typeof ev.photoId === 'string' ? ev.photoId : null, kind: 'done' }, ...c.history].slice(0, 30)
         c.lastDoneAt = at
-        c.turnOf = nextInOrder(orderOf(c, roles), c.turnOf, roles)
+        c.turnOf = nextInOrder(orderOf(c, roles), c.slot || c.turnOf, roles)
+        c.slot = null
         break
       }
       case 'chore.pass': {
         const c = s.chores.get(ev.id)
         if (!c || c.turnOf !== author) break
         c.history = [{ by: author, at, kind: 'pass' }, ...c.history].slice(0, 30)
-        c.turnOf = nextInOrder(orderOf(c, roles), c.turnOf, roles)
+        c.turnOf = nextInOrder(orderOf(c, roles), c.slot || c.turnOf, roles)
+        c.slot = null
         break
       }
 
@@ -340,6 +366,41 @@ export function weekDuck(s, now = Date.now()) {
   return best
 }
 
+// ---------- Reminders at a time ----------
+
+const atTime = (dayMs, hhmm) => {
+  const d = new Date(dayMs)
+  const [h, m] = hhmm.split(':').map(Number)
+  d.setHours(h, m, 0, 0)
+  return d.getTime()
+}
+
+/** When a chore with an hour should remind: its due day at that hour; if that already passed, the next such hour. */
+export function choreRemindAt(chore, now = Date.now()) {
+  if (!chore.time) return null
+  let at = atTime(dueAt(chore), chore.time)
+  while (at <= now) at += DAY
+  return at
+}
+
+/**
+ * The reminders this yard should have right now: { id, to (member or null = everyone), at, body }.
+ * Ids come from the chore or task, so every phone computes the same set and keeps one reminder current.
+ */
+export function plannedReminders(s, roles = new Map(), now = Date.now()) {
+  const out = []
+  for (const c of s.chores.values()) {
+    const at = choreRemindAt(c, now)
+    if (at && at - now < 60 * DAY) out.push({ id: `c_${c.id}`.slice(0, 64), to: turnOf(c, roles), at, body: `⏰ תורך: ${c.emoji} ${c.name}` })
+  }
+  for (const it of s.items.values()) {
+    if (it.done || !it.due) continue
+    const at = Date.parse(it.due)
+    if (at > now && at - now < 60 * DAY) out.push({ id: `t_${it.id}`.slice(0, 64), to: it.claimedBy || null, at, body: it.claimedBy ? `⏰ ${it.name}` : `⏰ ${it.name} (עוד אף אחד לא לקח)` })
+  }
+  return out
+}
+
 /** Votes per option and who voted for what. */
 export function pollResults(p) {
   const counts = p.options.map(() => 0)
@@ -435,6 +496,7 @@ export async function post(yid, evs, notify = null) {
   try {
     const res = await flush(yid)
     if (res.sent) await pull(yid).catch(() => undefined)
+    if (res.sent) syncReminders(yid).catch(() => undefined)
     return res
   } catch (e) {
     if (e.status === 403) throw e
@@ -492,6 +554,7 @@ export async function refresh(yid) {
   await flush(yid).catch(() => undefined)
   const added = await pull(yid)
   if (fresh) await markSeen(yid)
+  if (added) syncReminders(yid).catch(() => undefined)
   // Make sure the others know who I am (once, and again after I change my duckling).
   const st = stateOf(await db.getYard(yid))
   const mine = st.profiles.get(keys.memberId)
@@ -683,6 +746,37 @@ export async function savePush(sub) {
 export async function removePush(endpoint) {
   await api('POST', '/v2/push/off', { endpoint })
 }
+/**
+ * Brings the server's reminders for this yard in line with plannedReminders(), sending only what changed since
+ * this phone last sent it. The text is encrypted with the yard key, like every notification.
+ */
+export async function syncReminders(yid) {
+  const rec = await db.getYard(yid)
+  if (!rec || rec.removed || !rec.keys?.[rec.keyVersion]) return
+  const key = `cz.rem.${yid}`
+  let sent = {}
+  try {
+    sent = JSON.parse(localStorage.getItem(key) || '{}')
+  } catch { /* nothing sent yet */ }
+  const st = stateOf(rec)
+  const planned = plannedReminders(st, rolesOf(rec))
+  const raw = currentKey(rec)
+  const title = `${st.meta.emoji} ${st.meta.name}`.slice(0, 60)
+  const ops = []
+  const next = {}
+  for (const r of planned) {
+    const sig = `${r.to}|${r.at}|${r.body}`
+    next[r.id] = sig
+    if (sent[r.id] !== sig) ops.push({ id: r.id, to: r.to, at: r.at, keyVersion: rec.keyVersion, data: await encryptEvent(raw, { title, body: r.body.slice(0, 160) }) })
+  }
+  for (const id of Object.keys(sent)) if (!next[id]) ops.push({ id, delete: true })
+  if (!ops.length) return
+  for (let i = 0; i < ops.length; i += 50) await api('POST', `/v2/groups/${yid}/reminders`, { reminders: ops.slice(i, i + 50) })
+  try {
+    localStorage.setItem(key, JSON.stringify(next))
+  } catch { /* private mode */ }
+}
+
 export async function setMute(yid, muted) {
   await api('POST', `/v2/groups/${yid}/mute`, { muted })
   const rec = await db.getYard(yid)

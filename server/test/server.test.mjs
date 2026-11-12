@@ -36,7 +36,7 @@ before(async () => {
   wr(['d1', 'migrations', 'apply', 'nekamot-sync', '--local', '--persist-to', persist])
   await new Promise((r) => pushService.listen(PUSH_PORT, '127.0.0.1', r))
   proc = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(PORT), '--persist-to', persist, '--var', 'ALLOW_LOCALHOST:1', '--var', 'ALLOWED_ORIGINS:https://guyyyy15-web.github.io',
-    '--var', `VAPID_PUBLIC:${VAPID_PUBLIC}`, '--var', `VAPID_PRIVATE_JWK:${VAPID_PRIVATE}`, '--var', 'VAPID_SUBJECT:https://example.test/'], {
+    '--var', `VAPID_PUBLIC:${VAPID_PUBLIC}`, '--var', `VAPID_PRIVATE_JWK:${VAPID_PRIVATE}`, '--var', 'VAPID_SUBJECT:https://example.test/', '--test-scheduled'], {
     cwd: dir, detached: true, stdio: 'ignore', env: { ...process.env, CLOUDFLARE_API_TOKEN: 'local', CI: '1' },
   })
   for (let i = 0; i < 120; i++) {
@@ -449,6 +449,43 @@ test('vault (saved duckling): owner writes, anyone with the id reads, nobody els
   const codes = []
   for (let i = 0; i < 32; i++) codes.push((await fetch(`${BASE}/v2/vault/${id}`, { headers: { 'CF-Connecting-IP': '192.0.2.99' } })).status)
   assert.ok(codes.includes(429))
+})
+
+test('reminders: members schedule encrypted reminders; the cron sends due ones once, to the right member', async () => {
+  const { g, people: [a, b, c] } = await groupOf(3)
+  const sb = subscription('rb'), sc = subscription('rc')
+  await b.call('PUT', '/v2/push', { endpoint: sb.endpoint, p256dh: sb.p256dh, auth: sb.auth })
+  await c.call('PUT', '/v2/push', { endpoint: sc.endpoint, p256dh: sc.p256dh, auth: sc.auth })
+  const soon = Date.now() - 1000
+  const later = Date.now() + 3 * 3600e3
+  assert.equal((await a.call('POST', `/v2/groups/${g}/reminders`, { reminders: [
+    { id: 'rc_dishes', to: b.id, at: soon, keyVersion: 1, data: 'FOR-B' },
+    { id: 'rt_party', to: null, at: soon, keyVersion: 1, data: 'FOR-ALL' },
+    { id: 'rc_trash', to: c.id, at: later, keyVersion: 1, data: 'LATER' },
+  ] })).status, 200)
+  // Bad input is refused: a stranger as target, a time far away, and someone outside the yard.
+  assert.equal((await a.call('POST', `/v2/groups/${g}/reminders`, { reminders: [{ id: 'rbad', to: 'f'.repeat(24), at: later, keyVersion: 1, data: 'X' }] })).status, 400)
+  assert.equal((await a.call('POST', `/v2/groups/${g}/reminders`, { reminders: [{ id: 'rbad', to: null, at: Date.now() + 90 * 86400e3, keyVersion: 1, data: 'X' }] })).status, 400)
+  const outsider = await phone()
+  assert.equal((await outsider.call('POST', `/v2/groups/${g}/reminders`, { reminders: [] })).status, 403)
+  // A turn changed on another phone: the same id now points at C.
+  assert.equal((await c.call('POST', `/v2/groups/${g}/reminders`, { reminders: [{ id: 'rc_dishes', to: c.id, at: soon, keyVersion: 1, data: 'FOR-C' }] })).status, 200)
+  const before = { b: sentTo(sb).length, c: sentTo(sc).length }
+  assert.equal((await fetch(`${BASE}/__scheduled?cron=*/5+*+*+*+*`)).status, 200)
+  await settle()
+  const bGot = sentTo(sb).slice(before.b)
+  const cGot = sentTo(sc).slice(before.c)
+  const texts = async (sub, got) => Promise.all(got.map(async (p) => (await decryptPush(sub, p.body)).d))
+  assert.deepEqual((await texts(sb, bGot)).sort(), ['FOR-ALL'], 'B gets only the one for everyone')
+  assert.deepEqual((await texts(sc, cGot)).sort(), ['FOR-ALL', 'FOR-C'], 'C gets the reassigned one and the one for everyone')
+  // Sent once: a second run sends nothing new; the later one is still waiting.
+  await fetch(`${BASE}/__scheduled?cron=*/5+*+*+*+*`)
+  await settle()
+  assert.equal(sentTo(sc).length, before.c + 2)
+  const rows = JSON.parse(wr(['d1', 'execute', 'nekamot-sync', '--local', '--persist-to', persist, '--json', '--command', `SELECT id FROM reminders WHERE group_id='${g}'`]).toString())[0].results
+  assert.deepEqual(rows.map((r) => r.id), ['rc_trash'])
+  // Deleting works, and deleting the yard removes its reminders.
+  assert.equal((await a.call('POST', `/v2/groups/${g}/reminders`, { reminders: [{ id: 'rc_trash', delete: true }] })).status, 200)
 })
 
 test('sync: a full batch (200) in one request, duplicates inside a batch, gap-free sequence', async () => {

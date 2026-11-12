@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fold, openReports, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite } from '../chatzer/js/yard.js'
+import { fold, openReports, plannedReminders, choreRemindAt, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite } from '../chatzer/js/yard.js'
 
 const A = 'a'.repeat(24)
 const B = 'b'.repeat(24)
@@ -192,4 +192,50 @@ test('longer cycles: every two weeks and monthly chores come due after 14 and 30
   // An unknown cycle (say, from a newer app) falls back to weekly.
   const st = fold([e(A, { t: 'chore.put', id: 'c8', name: 'x', every: 'yearly', everyone: true })], roles)
   assert.equal(st.chores.get('c8').every, 'week')
+})
+
+test('the admin hands a turn to anyone; it is a stand-in, and the rotation goes on after the owner', () => {
+  const evs = [
+    e(A, { t: 'chore.put', id: 'c1', name: 'כלים', every: 'day', order: [A, B, C] }),
+    e(B, { t: 'chore.assign', id: 'c1', to: C }),
+  ]
+  assert.equal(fold(evs, roles).chores.get('c1').turnOf, A, 'a member cannot reassign')
+  const s1 = fold([...evs, e(A, { t: 'chore.assign', id: 'c1', to: C })], roles)
+  assert.equal(s1.chores.get('c1').turnOf, C, 'the admin can, even against the rotation')
+  // C does it (standing in for A): next is B, as if A had done it.
+  const s2 = fold([...evs, e(A, { t: 'chore.assign', id: 'c1', to: C }), e(C, { t: 'chore.done', id: 'c1' })], roles)
+  assert.equal(s2.chores.get('c1').turnOf, B)
+  // Editing the chore keeps whose turn it is, and keeps the hour.
+  const s3 = fold([...evs, e(A, { t: 'chore.assign', id: 'c1', to: C }), e(A, { t: 'chore.put', id: 'c1', name: 'כלים בערב', every: 'day', order: [A, B], time: '20:00' })], roles)
+  assert.deepEqual([s3.chores.get('c1').turnOf, s3.chores.get('c1').name, s3.chores.get('c1').time], [C, 'כלים בערב', '20:00'])
+  assert.equal(fold([e(A, { t: 'chore.put', id: 'c2', name: 'x', every: 'day', everyone: true, time: '25:00' })], roles).chores.get('c2').time, null, 'a bad hour is ignored')
+})
+
+test('the admin assigns a task to someone (or frees it); members cannot', () => {
+  const evs = [e(B, { t: 'item.put', id: 't1', name: 'לתקן את הברז', due: '2026-11-20T18:30' }), e(C, { t: 'item.claim', id: 't1', on: true })]
+  assert.equal(fold([...evs, e(B, { t: 'item.assign', id: 't1', to: B })], roles).items.get('t1').claimedBy, C)
+  const s1 = fold([...evs, e(A, { t: 'item.assign', id: 't1', to: B })], roles)
+  assert.deepEqual([s1.items.get('t1').claimedBy, s1.items.get('t1').due], [B, '2026-11-20T18:30'])
+  assert.equal(fold([...evs, e(A, { t: 'item.assign', id: 't1', to: null })], roles).items.get('t1').claimedBy, null)
+  assert.equal(fold([e(B, { t: 'item.put', id: 't2', name: 'x', due: 'מחר' })], roles).items.get('t2').due, null, 'a bad date is ignored')
+})
+
+test('reminders: a chore with an hour reminds whoever has the turn, on its due day; tasks with a date remind at that time', () => {
+  const now = Date.parse('2026-11-11T12:00:00')
+  const s = fold([
+    e(A, { t: 'chore.put', id: 'c1', name: 'כלים', emoji: '🫧', every: 'day', order: [B, A], time: '20:00' }, '2026-11-01T10:00:00'),
+    e(A, { t: 'chore.put', id: 'c2', name: 'זבל', every: 'week', order: [A], time: '08:00' }, '2026-11-01T10:00:00'),
+    e(A, { t: 'chore.done', id: 'c2' }, '2026-11-10T09:00:00'),
+    e(A, { t: 'chore.put', id: 'c3', name: 'בלי שעה', every: 'day', order: [A] }, '2026-11-01T10:00:00'),
+    e(A, { t: 'item.put', id: 't1', name: 'לקנות מתנה', due: '2026-11-12T17:00' }),
+    e(A, { t: 'item.put', id: 't2', name: 'עבר', due: '2026-11-10T17:00' }),
+  ], roles)
+  const plan = plannedReminders(s, roles, now)
+  const by = Object.fromEntries(plan.map((r) => [r.id, r]))
+  assert.deepEqual(Object.keys(by).sort(), ['c_c1', 'c_c2', 't_t1'])
+  assert.equal(by.c_c1.to, B)
+  assert.equal(new Date(by.c_c1.at).toString(), new Date('2026-11-11T20:00:00').toString(), 'late chore: today at 20:00')
+  assert.equal(new Date(by.c_c2.at).toString(), new Date('2026-11-17T08:00:00').toString(), 'weekly, done on the 10th: the 17th at 08:00')
+  assert.equal(by.t_t1.to, null, 'nobody took the task yet: everyone is reminded')
+  assert.equal(choreRemindAt({ time: '09:00', createdAt: '2026-11-01T10:00:00', lastDoneAt: null, every: 'day' }, now) > now, true)
 })

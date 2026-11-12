@@ -10,6 +10,10 @@ import { sendPush, allowedEndpoint, unb64u } from './webpush.js'
 const G = {
   maxMembers: 20,
   vaultBytes: 8192,
+  remindersPerPost: 50,
+  remindersPerGroup: 300,
+  remindAheadMs: 62 * 86400e3,
+  remindersPerRun: 200,
   vaultsPerMember: 4,
   vaultReadsPerHour: 30,
   eventBytes: 32 * 1024,
@@ -28,6 +32,7 @@ const MEMBER = /^[a-f0-9]{24}$/
 const GID = /^[A-Za-z0-9_-]{10,40}$/
 const PID = /^[A-Za-z0-9_-]{6,64}$/
 const HASH = /^[a-f0-9]{64}$/
+const RID = /^[A-Za-z0-9_-]{4,64}$/
 
 const enc = new TextEncoder()
 const hexOf = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -323,6 +328,40 @@ export async function groupsRoute(req, env, url, ctx) {
     return json({ ok: true, seq })
   }
 
+  // Reminders at a time: upsert or delete by id (ids are derived from the chore or task, so any member's phone
+  // keeps the same reminder current). The text is encrypted; the server learns when and to whom, never what.
+  if (rest === '/reminders' && m === 'POST') {
+    const body = parse(bytes, 128 * 1024)
+    const list = Array.isArray(body.reminders) ? body.reminders : fail(400, 'bad reminders')
+    if (list.length > G.remindersPerPost) fail(413, 'too many')
+    const now = Date.now()
+    const members = new Set((await env.DB.prepare('SELECT member_id FROM members WHERE group_id = ? AND removed_at IS NULL').bind(gid).all()).results.map((r) => r.member_id))
+    const stmts = []
+    let adds = 0
+    for (const r of list) {
+      if (!RID.test(String(r?.id || ''))) fail(400, 'bad id')
+      if (r.delete) {
+        stmts.push(env.DB.prepare('DELETE FROM reminders WHERE group_id = ? AND id = ?').bind(gid, r.id))
+        continue
+      }
+      if (r.to !== null && !members.has(r.to)) fail(400, 'bad target')
+      if (!Number.isInteger(r.at) || r.at < now - 3600e3 || r.at > now + G.remindAheadMs) fail(400, 'bad time')
+      if (typeof r.data !== 'string' || !r.data || r.data.length > G.notifyBytes || !Number.isInteger(r.keyVersion)) fail(400, 'bad data')
+      adds++
+      stmts.push(env.DB.prepare(
+        `INSERT INTO reminders (group_id, id, member_id, at, key_version, data, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (group_id, id) DO UPDATE SET member_id = excluded.member_id, at = excluded.at, key_version = excluded.key_version,
+           data = excluded.data, created_by = excluded.created_by, updated_at = excluded.updated_at`,
+      ).bind(gid, r.id, r.to, r.at, r.keyVersion, r.data, me, now))
+    }
+    if (adds) {
+      const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM reminders WHERE group_id = ?').bind(gid).first('n')
+      if (n + adds > G.remindersPerGroup + G.remindersPerPost) fail(413, 'too many reminders in this group')
+    }
+    if (stmts.length) await env.DB.batch(stmts)
+    return json({ ok: true })
+  }
+
   if (rest === '/mute' && m === 'POST') {
     const body = parse(bytes, 256)
     await env.DB.prepare(body.muted ? 'INSERT OR IGNORE INTO push_mutes (group_id, member_id) VALUES (?, ?)' : 'DELETE FROM push_mutes WHERE group_id = ? AND member_id = ?')
@@ -463,6 +502,38 @@ async function deleteGroup(env, gid) {
     if (list.objects.length) await env.PHOTOS.delete(list.objects.map((o) => o.key))
     cursor = list.truncated ? list.cursor : undefined
   } while (cursor)
-  await env.DB.batch(['events', 'invites', 'group_keys', 'members', 'push_mutes', 'push_sent'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE group_id = ?`).bind(gid))
+  await env.DB.batch(['events', 'invites', 'group_keys', 'members', 'push_mutes', 'push_sent', 'reminders'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE group_id = ?`).bind(gid))
     .concat([env.DB.prepare('DELETE FROM groups WHERE id = ?').bind(gid)]))
+}
+
+/** Cron: sends the reminders that are due (once each), then forgets them. Very old ones are dropped unsent. */
+export async function sendDueReminders(env, now = Date.now()) {
+  if (!env.VAPID_PUBLIC || !env.VAPID_PRIVATE_JWK) return { sent: 0 }
+  const { results: due } = await env.DB.prepare('SELECT * FROM reminders WHERE at <= ? ORDER BY at LIMIT ?').bind(now, G.remindersPerRun).all()
+  if (!due.length) return { sent: 0 }
+  const vapid = { publicKey: env.VAPID_PUBLIC, privateJwk: JSON.parse(env.VAPID_PRIVATE_JWK), subject: env.VAPID_SUBJECT || 'https://hechatzer.pages.dev/' }
+  let sent = 0
+  const gone = []
+  for (const r of due) {
+    if (r.at < now - 6 * 3600e3) continue
+    const { results: subs } = await env.DB.prepare(
+      `SELECT s.endpoint, s.member_id, s.p256dh, s.auth FROM push_subs s
+       JOIN members m ON m.member_id = s.member_id AND m.group_id = ? AND m.removed_at IS NULL
+       WHERE (? IS NULL OR s.member_id = ?)
+         AND s.member_id NOT IN (SELECT member_id FROM push_mutes WHERE group_id = ?)
+       LIMIT 60`,
+    ).bind(r.group_id, r.member_id, r.member_id, r.group_id).all()
+    const body = new TextEncoder().encode(JSON.stringify({ g: r.group_id, v: r.key_version, d: r.data }))
+    await Promise.all(subs.map(async (sub) => {
+      try {
+        const status = await sendPush(sub, body, { vapid, topic: r.id.slice(0, 32) })
+        if (status === 404 || status === 410) gone.push(sub.endpoint)
+        else if (status < 300) sent++
+      } catch { /* one bad subscription doesn't stop the others */ }
+    }))
+  }
+  const stmts = due.map((r) => env.DB.prepare('DELETE FROM reminders WHERE group_id = ? AND id = ? AND at = ?').bind(r.group_id, r.id, r.at))
+  for (const e of gone) stmts.push(env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ?').bind(e))
+  await env.DB.batch(stmts)
+  return { sent, due: due.length }
 }

@@ -1,4 +1,4 @@
-import { groupsRoute } from './groups.js'
+import { groupsRoute, sendDueReminders } from './groups.js'
 
 // נקמות שלי sync server: a Cloudflare Worker with D1 (records) and R2 (photos).
 // Everything it stores is encrypted by the phone; it cannot read names, reasons or photos.
@@ -31,6 +31,10 @@ const SPACE = /^[a-f0-9]{32}$/
 const TOKEN = /^[a-f0-9]{64}$/
 
 export default {
+  // Cron (החצר only, see wrangler.toml): reminders at a time.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(sendDueReminders(env).catch((e) => console.error(`reminders: ${e}`)))
+  },
   async fetch(req, env, ctx) {
     const cors = corsHeaders(req, env)
     const headers = { ...SECURITY_HEADERS, ...cors }
