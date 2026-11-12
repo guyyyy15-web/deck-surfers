@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fold, openReports, plannedReminders, choreRemindAt, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite } from '../chatzer/js/yard.js'
+import { fold, openReports, plannedReminders, choreRemindAt, splitList, summaryText, eventIcs, googleCalendarUrl, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite } from '../chatzer/js/yard.js'
 
 const A = 'a'.repeat(24)
 const B = 'b'.repeat(24)
@@ -254,4 +254,51 @@ test('ducklings: an old single accessory moves into its slot; new looks keep eve
   // fold keeps the whole look of a member
   const s = fold([e(B, { t: 'member.profile', nickname: 'מאיה', color: 'mint', hat: 'beret', body: 'hoodie', bodyColor: 'black', accessory: 'beret', evil: 'x' })], roles)
   assert.deepEqual(s.profiles.get(B), { nickname: 'מאיה', voice: null, color: 'mint', hat: 'beret', body: 'hoodie', bodyColor: 'black', accessory: 'beret' })
+})
+
+test('undo: "done" and "pass" can be taken back by whoever did them (or an admin), only the latest one', () => {
+  const base = [
+    e(A, { t: 'chore.put', id: 'c1', name: 'כלים', every: 'day', order: [A, B, C] }),
+    e(A, { t: 'chore.done', id: 'c1' }, '2026-11-10T20:00:00.000Z'),
+  ]
+  assert.equal(fold([...base, e(C, { t: 'chore.undo', id: 'c1' })], roles).chores.get('c1').turnOf, B, 'someone else cannot undo it')
+  const s1 = fold([...base, e(A, { t: 'chore.undo', id: 'c1' })], roles).chores.get('c1')
+  assert.deepEqual([s1.turnOf, s1.lastDoneAt, s1.history.length], [A, null, 0])
+  const s2 = fold([...base, e(B, { t: 'chore.pass', id: 'c1' }), e(B, { t: 'chore.undo', id: 'c1' })], roles).chores.get('c1')
+  assert.equal(s2.turnOf, B, 'B takes back passing the turn')
+  // A stand-in's done, undone, goes back to the stand-in (and keeps the owner's slot).
+  const s3 = fold([e(A, { t: 'chore.put', id: 'c2', name: 'x', every: 'day', order: [A, B, C] }), e(A, { t: 'chore.assign', id: 'c2', to: C }), e(C, { t: 'chore.done', id: 'c2' }), e(C, { t: 'chore.undo', id: 'c2' })], roles).chores.get('c2')
+  assert.deepEqual([s3.turnOf, s3.slot], [C, A])
+})
+
+test('transparency: on by default; only the admin turns it off', () => {
+  assert.equal(fold([e(A, { t: 'yard.meta', name: 'בית', kind: 'home' })], roles).meta.open, true)
+  assert.equal(fold([e(A, { t: 'yard.meta', name: 'בית', kind: 'home' }), e(A, { t: 'yard.meta', name: 'בית', kind: 'home', open: false })], roles).meta.open, false)
+  assert.equal(fold([e(A, { t: 'yard.meta', name: 'בית', kind: 'home' }), e(B, { t: 'yard.meta', name: 'בית', kind: 'home', open: false })], roles).meta.open, true)
+})
+
+test('a pasted list becomes items; numbers that are amounts stay', () => {
+  assert.deepEqual(splitList('חומוס, פיתות\n- קרח\n1. 20 פיתות\n• 2 קילו בשר\nחומוס'), ['חומוס', 'פיתות', 'קרח', '20 פיתות', '2 קילו בשר'])
+  assert.deepEqual(splitList('מלח גס'), ['מלח גס'])
+  assert.deepEqual(splitList('  ,  '), [])
+})
+
+test('summary for WhatsApp, and the event in a calendar', () => {
+  const s = fold([
+    e(A, { t: 'yard.meta', name: 'מנגל', emoji: '🔥', kind: 'event', when: '2026-11-20T14:00', where: 'רמת גן, בגינה' }),
+    e(A, { t: 'item.put', id: 'i1', name: 'פיתות', qty: '20' }),
+    e(A, { t: 'item.put', id: 'i2', name: 'חומוס' }),
+    e(B, { t: 'item.claim', id: 'i1', on: true }),
+  ], roles)
+  const text = summaryText(s, (m) => (m === B ? 'מאיה' : '?'), { link: 'https://x/#/join/abc' })
+  assert.match(text, /✅ פיתות \(20\): מאיה/)
+  assert.match(text, /⬜ חומוס: עוד פנוי/)
+  assert.match(text, /עוד דבר אחד שאף אחד לא לקח/)
+  assert.match(text, /לוקחים כאן: https:\/\/x\/#\/join\/abc$/)
+  const ics = eventIcs(s, { uid: 'g1', now: Date.parse('2026-11-12T10:00:00Z') })
+  assert.match(ics, /BEGIN:VEVENT/)
+  assert.match(ics, /LOCATION:רמת גן\\, בגינה/)
+  assert.ok(ics.includes(`DTSTART:${new Date('2026-11-20T14:00').toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`))
+  assert.match(googleCalendarUrl(s), /^https:\/\/calendar\.google\.com\/calendar\/render\?action=TEMPLATE/)
+  assert.equal(eventIcs(fold([e(A, { t: 'yard.meta', name: 'בית', kind: 'home' })], roles)), null)
 })

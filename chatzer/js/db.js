@@ -54,7 +54,7 @@ export function persist() {
 // ---------- Settings ----------
 
 const KEY = 'cz.settings'
-const DEFAULTS = { voice: 'f', hideInstall: false }
+const DEFAULTS = { voice: null, hideInstall: false }
 
 export function loadSettings() {
   try {

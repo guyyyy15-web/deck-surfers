@@ -78,7 +78,7 @@ jobs:
         timeout-minutes: 10
       - run: node scripts/chatzer-smoke.cjs
         name: החצר (3 phones)
-        timeout-minutes: 8
+        timeout-minutes: 12
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -7,14 +7,19 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, CLOTH_COLORS, MOODS, SLOTS, lookOf, legacyAccessory } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.7.0'
+export const APP_VERSION = '0.8.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
 
 const $app = document.getElementById('app')
 let settings = db.loadSettings()
-const g = (f, m) => (settings.voice === 'm' ? m : f)
+/**
+ * Speaks to the user in their chosen form: g(feminine, masculine). Until they choose, a neutral slash form
+ * ("מביא/ה"), never one gender by default.
+ */
+const neutral = (f, m) => (f.startsWith(m) ? `${m}/${f.slice(m.length)}` : `${m}/${f}`)
+const g = (f, m) => (settings.voice === 'm' ? m : settings.voice === 'f' ? f : neutral(f, m))
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 const me = () => identity.myId()
 
@@ -106,7 +111,7 @@ function who(st, rec, id) {
   const voice = id === me() ? settings.voice : p.voice
   return {
     name: id === me() ? g('את', 'אתה') : p.nickname || 'ברווזון', look: p, admin: role === 'admin',
-    g: (f, m) => (voice === 'm' ? m : voice === 'f' ? f : `${m}/${f.slice(-1)}`),
+    g: (f, m) => (voice === 'm' ? m : voice === 'f' ? f : neutral(f, m)),
   }
 }
 const duckOf = (st, rec, id, size = 26) => {
@@ -281,7 +286,7 @@ function duckForm(p = {}, { compact = false, pets = false } = {}) {
     : `<div id="closet">${closetHtml(look)}</div>`}
     <span class="lbl" id="voice-l">איך לפנות אלייך? אני…</span>
     <div class="choices" role="group" aria-labelledby="voice-l">
-      <button type="button" class="choice" data-voice="f" aria-pressed="${settings.voice !== 'm'}">אישה</button>
+      <button type="button" class="choice" data-voice="f" aria-pressed="${settings.voice === 'f'}">אישה</button>
       <button type="button" class="choice" data-voice="m" aria-pressed="${settings.voice === 'm'}">גבר</button>
     </div>
     ${pets ? `<span class="lbl" id="pet-l">יש בעל חיים בבית?</span>
@@ -334,13 +339,11 @@ function welcome() {
   $app.innerHTML = `<main class="hero">
     <div class="hill hill-a" aria-hidden="true"></div><div class="hill hill-b" aria-hidden="true"></div>
     <span class="tag">מי מביא מה, תור מי</span>
-    <h1>${g('ברוכה הבאה', 'ברוך הבא')} לחצר</h1>
+    <h1>ברוכים הבאים לחצר</h1>
     <p class="lead">מנגל, ארוחת שישי, יום הולדת או מטלות הבית: כולם רואים מה חסר, לוקחים בלחיצה, ואף אחד לא שוכח.</p>
     ${demoParade()}
     <form class="panel" id="f" novalidate>${duckForm({}, { compact: true, pets: true })}<p class="err" id="err" role="alert"></p>
-<label class="choice" style="margin-top:12px;width:100%;justify-content:flex-start;gap:10px;padding:10px 14px;border-radius:16px;min-height:52px">
-        <input type="checkbox" id="age" style="width:22px;height:22px;flex:none;accent-color:var(--green)">
-        <span style="font-size:14px;line-height:20px">${g('אני בת 13 ומעלה ומסכימה', 'אני בן 13 ומעלה ומסכים')} ל<button type="button" class="link-btn" data-privacy style="min-height:auto;padding:0;font-size:14px">מדיניות הפרטיות</button></span></label>
+<p class="small muted" style="margin:12px 0 0">בהמשך מסכימים ל<button type="button" class="link-btn" data-privacy style="min-height:auto;padding:0;font-size:13px">מדיניות הפרטיות ותנאי השימוש</button>.</p>
       <button class="btn btn-primary btn-wide" type="submit" style="margin-top:12px">יאללה, לחצר! 🦆</button></form>
     <button type="button" class="link-btn" id="signin" style="font-weight:700">כבר יש לי ברווזון</button>
     <button type="button" class="link-btn" id="paste">יש לי קישור הזמנה</button>
@@ -352,7 +355,7 @@ function welcome() {
     e.preventDefault()
     const v = read()
     if (!identity.validName(v.nickname)) return ($app.querySelector('#err').textContent = 'שם באורך 2–20 תווים, בבקשה')
-    if (!agreed()) return ($app.querySelector('#err').textContent = 'צריך לאשר גיל 13 ומעלה ואת מדיניות הפרטיות')
+    if (!settings.voice) return ($app.querySelector('#err').textContent = 'איך לפנות אלייך? בחירה של אישה או גבר')
     await act(async () => {
       await identity.saveProfile(v)
       db.persist()
@@ -360,7 +363,7 @@ function welcome() {
       await render()
     })
   }
-  $app.querySelector('#paste').onclick = pasteSheet
+  $app.querySelector('#paste').onclick = quickPaste
   $app.querySelector('#signin').onclick = () => signInSheet()
 }
 
@@ -496,14 +499,6 @@ function codeSheet(code, after) {
 
 // ---------- Age and privacy ----------
 
-/** The age/privacy box on the form: checked now, remembered for later. */
-function agreed() {
-  const box = $app.querySelector('#age')
-  if (!box?.checked) return false
-  settings = { ...settings, agreedAt: new Date().toISOString() }
-  db.saveSettings(settings)
-  return true
-}
 function bindPrivacyLinks(root) {
   root.querySelectorAll('[data-privacy]').forEach((b) => (b.onclick = (e) => {
     e.preventDefault()
@@ -525,6 +520,27 @@ function privacySheet() {
     </div>
     <div class="stack"><button class="btn btn-soft" id="ok" type="button">הבנתי</button></div>`, (root) => {
     root.querySelector('#ok').onclick = closeSheet
+  })
+}
+
+/** Once, for ducklings made before the app asked: how to address you. */
+function askVoice() {
+  if (settings.voice || settings.askedVoice || !identity.load()?.keys) return
+  settings = { ...settings, askedVoice: true }
+  db.saveSettings(settings)
+  openSheet(`<h2>איך לפנות אלייך?</h2>
+    <p class="lead">ככה האפליקציה תכתוב לך, וככה הברווזונים בחצר יראו אותך ("מאיה מביאה", "דני מביא").</p>
+    <div class="stack"><button class="btn btn-soft" data-v="f" type="button">אני אישה</button><button class="btn btn-soft" data-v="m" type="button">אני גבר</button>
+      <button class="link-btn" data-v="" type="button">אחר כך</button></div>`, (root) => {
+    root.querySelectorAll('[data-v]').forEach((b) => (b.onclick = async () => {
+      if (b.dataset.v) {
+        settings = { ...settings, voice: b.dataset.v }
+        db.saveSettings(settings)
+        Y.refreshAll().catch(() => undefined) // the yards learn it with the profile
+      }
+      await closeSheet()
+      render(true)
+    }))
   })
 }
 
@@ -582,7 +598,7 @@ async function homeScreen() {
     ${showInstall ? `<div class="nudge" style="margin-top:22px"><span style="flex:1">רוצה לדעת כשתורך? ${g('הוסיפי', 'הוסף')} את החצר למסך הבית.</span><button class="pill soft" id="install" type="button">איך?</button></div>` : ''}
   </main>`
   $app.querySelector('#new').onclick = newYardSheet
-  $app.querySelector('#paste').onclick = pasteSheet
+  $app.querySelector('#paste').onclick = quickPaste
   $app.querySelector('#install')?.addEventListener('click', installSheet)
 }
 
@@ -624,7 +640,7 @@ const everyOptions = (sel = 'week') => Object.entries(Y.EVERY).map(([k, v]) => `
 const EVENT_EMOJI = ['🔥', '🎂', '🍷', '🧺', '🎉', '🏖️', '🎄', '🥳']
 const HOME_EMOJI = ['🏡', '🏠', '🛋️', '🧹', '🪴', '🐕']
 
-function newYardSheet() {
+function newYardSheet(prefill = null) {
   let kind = null
   openSheet(`<h2>חצר חדשה</h2><p class="lead">מה מארגנים?</p>
     <div class="kind-cards" style="margin-top:14px">
@@ -633,6 +649,7 @@ function newYardSheet() {
     </div>
     <form id="details" hidden novalidate></form>`, (root) => {
     const form = root.querySelector('#details')
+    if (prefill) setTimeout(() => root.querySelector(`[data-kind="${prefill.kind}"]`)?.click())
     root.querySelectorAll('.kind').forEach((b) => (b.onclick = () => {
       kind = b.dataset.kind
       root.querySelectorAll('.kind').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
@@ -666,6 +683,7 @@ function newYardSheet() {
         <span class="lbl" id="emo-l">אימוג׳י</span>
         <div class="choices" role="group" aria-labelledby="emo-l">${HOME_EMOJI.map((e, i) => `<button type="button" class="choice" data-emo="${e}" aria-pressed="${i === 0}" aria-label="${e}">${e}</button>`).join('')}</div>`
       form.insertAdjacentHTML('beforeend', '<p class="err" id="err" role="alert"></p><button class="btn btn-primary btn-wide" type="submit">פותחים חצר! 🐥</button>')
+      if (prefill) root.querySelector('h2').textContent = 'עוד אחד כזה 🔁'
       const single = (sel) => form.querySelectorAll(sel).forEach((x) => (x.onclick = () => form.querySelectorAll(sel).forEach((y) => y.setAttribute('aria-pressed', String(y === x)))))
       single('[data-tpl]')
       single('[data-emo]')
@@ -702,12 +720,32 @@ function newYardSheet() {
           }
         }
       }
+      // A pasted list in "עוד משהו לרשימה" becomes several chips.
+      form.querySelector('#citem')?.addEventListener('paste', (e) => {
+        const list = Y.splitList(e.clipboardData?.getData('text') || '')
+        if (list.length < 2) return
+        e.preventDefault()
+        for (const n of list) {
+          form.querySelector('#citem').value = n
+          form.querySelector('#citem-add').click()
+        }
+      })
       addOwn('#cchore', '#cchores', (name) => {
         const every = form.querySelector('#cevery').value
         return { kind: 'chore', name, every, label: `✨ ${name} · ${Y.EVERY[every].label}` }
       })
       addOwn('#citem', '#citems', (name) => ({ kind: 'item', name, label: name }))
       form.querySelector('#yname').focus()
+      if (prefill && kind === prefill.kind) {
+        form.querySelector('[data-tpl="none"]')?.click()
+        form.querySelector('#yname').value = prefill.name || ''
+        form.querySelector(`[data-emo="${prefill.emoji}"]`)?.click()
+        for (const n of prefill.items || []) {
+          form.querySelector('#citem').value = n
+          form.querySelector('#citem-add').click()
+        }
+        form.querySelector('#when')?.focus()
+      }
     }))
     form.onsubmit = async (e) => {
       e.preventDefault()
@@ -788,22 +826,29 @@ async function joinScreen(code) {
     <p class="lead">${lead}</p>
     ${parade(ducks)}
     <form class="panel" id="f" novalidate>
-      ${p ? `<div class="member">${duck(p, 48)}<span class="n">${g('תיכנסי', 'תיכנס')} בתור <b>${esc(p.nickname)}</b></span><a class="link-btn" href="#/me">שינוי</a></div>` : `${duckForm({}, { compact: true })}<label class="choice" style="margin-top:12px;width:100%;justify-content:flex-start;gap:10px;padding:10px 14px;border-radius:16px;min-height:52px">
-        <input type="checkbox" id="age" style="width:22px;height:22px;flex:none;accent-color:var(--green)">
-        <span style="font-size:14px;line-height:20px">${g('אני בת 13 ומעלה ומסכימה', 'אני בן 13 ומעלה ומסכים')} ל<button type="button" class="link-btn" data-privacy style="min-height:auto;padding:0;font-size:14px">מדיניות הפרטיות</button></span></label><button class="link-btn" type="button" id="signin" style="margin-top:6px">כבר יש לי ברווזון? כניסה</button>`}
+      ${p ? `<div class="member">${duck(p, 48)}<span class="n">${g('תיכנסי', 'תיכנס')} בתור <b>${esc(p.nickname)}</b></span><a class="link-btn" href="#/me">שינוי</a></div>` : `${duckForm({}, { compact: true })}<p class="small muted" style="margin:12px 0 0">בהמשך מסכימים ל<button type="button" class="link-btn" data-privacy style="min-height:auto;padding:0;font-size:13px">מדיניות הפרטיות ותנאי השימוש</button>.</p><button class="link-btn" type="button" id="signin" style="margin-top:6px">כבר יש לי ברווזון? כניסה</button>`}
       ${peek.full ? '<p class="err">החצר מלאה (20 ברווזונים). אי אפשר להצטרף כרגע.</p>' : '<p class="err" id="err" role="alert"></p>'}
       <button class="btn btn-primary btn-wide" type="submit" ${peek.full ? 'disabled' : ''}>אני בחצר! 🦆</button>
     </form>
-    <p class="fine">בלי הרשמה ובלי להתקין. אפשר להוסיף למסך הבית אחר כך, בשביל התראות.</p>`)
+    <p class="fine">בלי הרשמה ובלי להתקין. אפשר להוסיף למסך הבית אחר כך, בשביל התראות.</p>
+    ${push.isIOS() && !push.standalone() ? `<button class="link-btn" type="button" id="copyforapp" style="font-size:14px">כבר יש לך את החצר על מסך הבית? העתקת הקישור, והדבקה שם</button>` : ''}`)
   const read = p ? null : bindDuckForm($app)
   bindPrivacyLinks($app)
   $app.querySelector('#signin')?.addEventListener('click', () => signInSheet(() => joinScreen(code)))
+  $app.querySelector('#copyforapp')?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(location.href)
+      toast('הועתק. פותחים את החצר מהמסך ולוחצים "הדבקת קישור"')
+    } catch {
+      toast('לא הצלחתי להעתיק. לחיצה ארוכה על שורת הכתובת')
+    }
+  })
   $app.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault()
     if (read) {
       const v = read()
       if (!identity.validName(v.nickname)) return ($app.querySelector('#err').textContent = 'שם באורך 2–20 תווים, בבקשה')
-      if (!agreed()) return ($app.querySelector('#err').textContent = 'צריך לאשר גיל 13 ומעלה ואת מדיניות הפרטיות')
+      if (!settings.voice) return ($app.querySelector('#err').textContent = 'איך לפנות אלייך? בחירה של אישה או גבר')
       await identity.saveProfile(v)
       db.persist()
     }
@@ -811,7 +856,14 @@ async function joinScreen(code) {
     busy(btn, true, 'נכנסת…')
     const id = await act(() => Y.joinInvite(code))
     busy(btn, false)
-    if (id) location.replace(`#/y/${id}`)
+    if (!id) return
+    location.replace(`#/y/${id}`)
+    // Joined in the browser on a phone: next, the small guided step to get the app on the home screen.
+    if (!push.standalone() && /iPhone|iPad|iPod|Android/.test(navigator.userAgent) && !settings.afterJoinShown) {
+      settings = { ...settings, afterJoinShown: true }
+      db.saveSettings(settings)
+      setTimeout(() => installSheet({ joined: true }), 1200)
+    }
   }
 }
 
@@ -849,7 +901,8 @@ async function yardScreen(id) {
     ${body}
     ${polls}
     <div class="actions-bar">
-      ${isAdmin ? `<a class="chip-btn" href="#/y/${id}/team">👥 מי עושה מה</a>` : ''}
+      ${isAdmin || st.meta.open ? `<a class="chip-btn" href="#/y/${id}/team">👥 מי עושה מה</a>` : ''}
+      ${st.meta.kind === 'event' ? '<button class="chip-btn" id="share" type="button">📤 לוואטסאפ</button>' : ''}
       <button class="chip-btn" id="invite" type="button">🐥 הזמנה</button>
       <button class="chip-btn" id="poll" type="button">📊 הצבעה</button>
       <a class="chip-btn" href="#/y/${id}/chat">💬 צ׳אט${unreadChat ? ` <span class="badge">${unreadChat}</span>` : ''}</a>
@@ -963,6 +1016,7 @@ function bindYard(rec, st, roles, myId) {
   const id = rec.id
   const $ = (s) => $app.querySelector(s)
   $('#menu').onclick = () => yardMenu(id)
+  $('#share')?.addEventListener('click', () => summarySheet(id))
   $('#reports')?.addEventListener('click', () => reportsSheet(id))
   $('#invite').onclick = () => inviteSheet(id)
   $('#poll').onclick = () => pollSheet(id)
@@ -984,11 +1038,33 @@ function bindYard(rec, st, roles, myId) {
     if (u) img.src = u
     else img.hidden = true
   })
+  // A pasted list (one per line) becomes "a, b, c" in the one-line field, and then several items.
+  $('#addin').addEventListener('paste', (e) => {
+    const text = e.clipboardData?.getData('text') || ''
+    if (!/\n/.test(text.trim())) return
+    e.preventDefault()
+    $('#addin').value = Y.splitList(text).join(', ')
+  })
   $('#add').onsubmit = async (e) => {
     e.preventDefault()
     const input = $('#addin')
-    const name = input.value.trim()
-    if (!name) return input.focus()
+    const names = Y.splitList(input.value)
+    if (!names.length) return input.focus()
+    if (names.length > 1) {
+      const p = identity.profile()
+      const evs = names.map((n) => ({ t: 'item.put', id: Y.newId('t'), name: n }))
+      input.value = ''
+      await act(async () => {
+        await Y.post(id, evs, { body: `${p.nickname}: הוספתי ${names.length} דברים: ${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''}` })
+        await render(true)
+        toast(`נוספו ${names.length}`, { label: 'בטל', run: () => act(async () => {
+          await Y.post(id, evs.map((x) => ({ t: 'item.delete', id: x.id })))
+          await render(true)
+        }) })
+      })
+      return
+    }
+    const name = names[0]
     const itemId = Y.newId('t')
     const p = identity.profile()
     input.value = ''
@@ -1010,7 +1086,7 @@ async function claim(id, itemId, on, btn) {
     if (on && it && it.claimedBy !== me()) {
       const w = who(st, null, it.claimedBy)
       toast(`${w.name} ${w.g('הקדימה', 'הקדים')} אותך 🙈`)
-    }
+    } else if (it) toast(on ? `${it.name}: ${g('לקחת', 'לקחת')} ✓` : `${it.name}: שוחרר`, { label: 'בטל', run: () => claim(id, itemId, !on) })
   })
   await closeSheet()
   await render(true)
@@ -1032,7 +1108,10 @@ async function passTurn(id, choreId) {
   if (!c) return
   const next = Y.nextInOrder(Y.orderOf(c, roles), Y.turnOf(c, roles), roles)
   await act(() => Y.post(id, [{ t: 'chore.pass', id: choreId }], { body: `תורך! ${c.emoji} ${c.name} (העברה מ${identity.profile().nickname})`, to: [next] }))
-  toast(`העברת ל${who(st, rec, next).name}`)
+  toast(`העברת ל${who(st, rec, next).name}`, { label: 'בטל', run: () => act(async () => {
+    await Y.post(id, [{ t: 'chore.undo', id: choreId }])
+    await render(true)
+  }) })
   await closeSheet()
   await render(true)
 }
@@ -1078,6 +1157,10 @@ async function itemSheet(id, itemId) {
       if (a === 'delete') {
         if (!confirm(`למחוק את "${it.name}"?`)) return
         await act(() => Y.post(id, [{ t: 'item.delete', id: itemId }]))
+        toast(`נמחק: ${it.name}`, { label: 'בטל', run: () => act(async () => {
+          await Y.post(id, [{ t: 'item.put', id: itemId, name: it.name, qty: it.qty || '', due: it.due || null }])
+          await render(true)
+        }) })
       }
       await closeSheet()
       await render(true)
@@ -1360,7 +1443,10 @@ async function doneSheet(id, target) {
       busy(btn, false)
       if (!okDone) return
       await closeSheet()
-      toast('כל הכבוד! 🐥')
+      toast('כל הכבוד! 🐥', { label: 'בטל', run: () => act(async () => {
+        await Y.post(id, [target.chore ? { t: 'chore.undo', id: target.chore } : { t: 'item.done', id: target.item, on: false }])
+        await render(true)
+      }) })
       await render(true)
       maybeAskPush()
     }
@@ -1512,7 +1598,10 @@ async function yardMenu(id) {
   openSheet(`<h2>${esc(st.meta.emoji)} ${esc(st.meta.name)}</h2>
     <div class="stack">
       <button class="btn btn-soft" data-a="invite">🐥 הברווזונים וההזמנה</button>
-      ${isAdmin ? '<button class="btn btn-ghost" data-a="team">👥 מי עושה מה (לו״ז של כולם)</button>' : ''}
+      ${isAdmin || st.meta.open ? '<button class="btn btn-ghost" data-a="team">👥 מי עושה מה (לו״ז של כולם)</button>' : ''}
+      <button class="btn btn-ghost" data-a="summary">📤 שליחת סיכום לוואטסאפ</button>
+      ${st.meta.kind === 'event' && st.meta.when ? '<button class="btn btn-ghost" data-a="calendar">📅 הוספה ליומן</button>' : ''}
+      ${st.meta.kind === 'event' ? '<button class="btn btn-ghost" data-a="again">🔁 אירוע חדש עם אותה רשימה</button>' : ''}
       ${isAdmin ? '<button class="btn btn-ghost" data-a="edit">✏️ עריכת פרטי החצר</button>' : ''}
       ${pushOn ? `<button class="btn btn-ghost" data-a="mute">${rec.muted ? '🔔 להחזיר התראות מהחצר' : '🔕 להשתיק את החצר'}</button>` : ''}
       <button class="btn btn-danger" data-a="leave">🚪 לעזוב את החצר</button>
@@ -1522,6 +1611,12 @@ async function yardMenu(id) {
       const a = b.dataset.a
       if (a === 'invite') return inviteSheet(id)
       if (a === 'team') return go(`#/y/${id}/team`)
+      if (a === 'summary') return summarySheet(id)
+      if (a === 'calendar') return calendarSheet(id)
+      if (a === 'again') {
+        await closeSheet()
+        return newYardSheet({ kind: 'event', name: st.meta.name, emoji: st.meta.emoji, items: [...st.items.values()].sort((x, y) => (x.createdAt < y.createdAt ? -1 : 1)).map((i) => i.name) })
+      }
       if (a === 'edit') return editYardSheet(id)
       if (a === 'mute') {
         await act(() => Y.setMute(id, !rec.muted))
@@ -1553,14 +1648,18 @@ async function editYardSheet(id) {
     <label class="lbl" for="where">איפה</label><input class="input" id="where" maxlength="60" value="${esc(m.where)}">` : ''}
     <span class="lbl" id="emo-l">אימוג׳י</span>
     <div class="choices" role="group" aria-labelledby="emo-l">${[...new Set([m.emoji, ...emojis])].map((e) => `<button type="button" class="choice" data-emo="${esc(e)}" aria-pressed="${e === m.emoji}" aria-label="${esc(e)}">${esc(e)}</button>`).join('')}</div>
+    <span class="lbl" id="open-l">שקיפות</span>
+    <div class="choices" role="group" aria-labelledby="open-l"><button type="button" class="choice" id="open" aria-pressed="${m.open}">👥 כולם רואים מי עושה מה</button></div>
+    <p class="small muted" style="margin:6px 0 0">כשזה כבוי, רק ${g('את רואה', 'אתה רואה')} את המסך "מי עושה מה". ליד כל דבר תמיד רואים מי לקח אותו.</p>
     <div class="stack"><button class="btn btn-primary" type="submit">שמירה</button></div></form>`, (root) => {
     const f = root.querySelector('#f')
+    f.querySelector('#open').onclick = (e) => e.currentTarget.setAttribute('aria-pressed', String(e.currentTarget.getAttribute('aria-pressed') !== 'true'))
     f.querySelectorAll('[data-emo]').forEach((x) => (x.onclick = () => f.querySelectorAll('[data-emo]').forEach((y) => y.setAttribute('aria-pressed', String(y === x)))))
     f.onsubmit = async (e) => {
       e.preventDefault()
       const name = f.querySelector('#yname').value.trim()
       if (name.length < 2) return
-      await act(() => Y.post(id, [{ t: 'yard.meta', name, emoji: f.querySelector('[data-emo][aria-pressed="true"]').dataset.emo, kind: m.kind, when: f.querySelector('#when')?.value || null, where: f.querySelector('#where')?.value.trim() || '' }]))
+      await act(() => Y.post(id, [{ t: 'yard.meta', name, emoji: f.querySelector('[data-emo][aria-pressed="true"]').dataset.emo, kind: m.kind, when: f.querySelector('#when')?.value || null, where: f.querySelector('#where')?.value.trim() || '', open: f.querySelector('#open').getAttribute('aria-pressed') === 'true' }]))
       await closeSheet()
       await render(true)
     }
@@ -1568,6 +1667,17 @@ async function editYardSheet(id) {
 }
 
 // ---------- Paste a link (or move from Safari) ----------
+
+/** In the app: read the clipboard once; an invite goes straight to joining, anything else opens the paste sheet. */
+async function quickPaste() {
+  let text = ''
+  try {
+    text = await navigator.clipboard.readText()
+  } catch { /* not allowed: the sheet has a field */ }
+  const code = Y.extractInvite(text)
+  if (code) return go(`#/join/${code}`)
+  pasteSheet()
+}
 
 function pasteSheet() {
   openSheet(`<h2>יש לי קישור</h2>
@@ -1610,10 +1720,10 @@ function pasteSheet() {
 
 // ---------- Install ----------
 
-function installSheet() {
+function installSheet({ joined = false } = {}) {
   const ios = push.isIOS()
-  openSheet(`<h2>החצר על מסך הבית</h2>
-    <p class="lead">ככה מקבלים התראות כשתורך או כשמוסיפים משהו, ופותחים בלחיצה.</p>
+  openSheet(`<h2>${joined ? `🎉 ${g('את', 'אתה')} בחצר! עוד צעד קטן` : 'החצר על מסך הבית'}</h2>
+    <p class="lead">${joined ? 'כדי לקבל תזכורות כשתורך, ולפתוח את החצר בלחיצה מהמסך:' : 'ככה מקבלים התראות כשתורך או כשמוסיפים משהו, ופותחים בלחיצה.'}</p>
     ${ios ? `
       <ol style="padding-inline-start:20px;line-height:1.8;margin:14px 0 0">
         <li><b>קודם, ${g('שמרי', 'שמור')} את הברווזון</b>, כי האפליקציה שעל מסך הבית לא רואה את מה שבספארי.</li>
@@ -1756,6 +1866,66 @@ async function todayScreen() {
   </main>`
 }
 
+// ---------- Summary for WhatsApp, and the calendar ----------
+
+async function summarySheet(id) {
+  const rec = await Y.localYard(id)
+  const st = Y.stateOf(rec)
+  const nameOf = (m) => (m === me() ? identity.profile()?.nickname || '' : who(st, rec, m).name)
+  let link = inviteCache.get(id) || ''
+  openSheet(`<h2>📤 סיכום לוואטסאפ</h2>
+    <pre class="summary" id="sum">${esc(Y.summaryText(st, nameOf, { link }))}</pre>
+    <div class="stack">
+      <a class="btn btn-primary" id="wa" href="#" target="_blank" rel="noopener">שליחה בוואטסאפ</a>
+      ${navigator.share ? '<button class="btn btn-soft" id="sh" type="button">שיתוף…</button>' : ''}
+      <button class="btn btn-ghost" id="cp" type="button">העתקה</button>
+    </div>`, async (root) => {
+    const set = () => {
+      const text = Y.summaryText(st, nameOf, { link })
+      root.querySelector('#sum').textContent = text
+      root.querySelector('#wa').href = `https://wa.me/?text=${encodeURIComponent(text)}`
+      return text
+    }
+    set()
+    root.querySelector('#sh')?.addEventListener('click', () => navigator.share({ text: set() }).catch(() => undefined))
+    root.querySelector('#cp').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(set())
+        toast('הסיכום הועתק')
+      } catch {
+        toast('לא הצלחתי להעתיק')
+      }
+    }
+    if (!link) {
+      // The summary ends with a link to take things; made in the background, like an invite.
+      const inv = await Y.createInvite(id).catch(() => null)
+      if (inv) {
+        link = Y.inviteLink(inv.code)
+        inviteCache.set(id, link)
+        if (root.isConnected) set()
+      }
+    }
+  })
+}
+
+async function calendarSheet(id) {
+  const rec = await Y.localYard(id)
+  const st = Y.stateOf(rec)
+  const mine = [...st.items.values()].filter((i) => i.claimedBy === me()).map((i) => i.name)
+  const notes = mine.length ? `${g('אני מביאה', 'אני מביא')}: ${mine.join(', ')}` : ''
+  const ics = Y.eventIcs(st, { uid: id, notes })
+  const gcal = Y.googleCalendarUrl(st, { notes })
+  if (!ics) return toast('לאירוע אין עדיין תאריך')
+  openSheet(`<h2>📅 ${esc(st.meta.name)} ביומן</h2>
+    <p class="lead">${esc(whenText(st.meta.when))}${st.meta.where ? ` · ${esc(st.meta.where)}` : ''}. עם תזכורת 3 שעות לפני.</p>
+    <div class="stack">
+      <a class="btn btn-primary" id="ics" href="#" download="${esc(st.meta.name)}.ics">${push.isIOS() ? 'ליומן של האייפון' : 'קובץ ליומן'}</a>
+      <a class="btn btn-ghost" href="${esc(gcal)}" target="_blank" rel="noopener">Google Calendar</a>
+    </div>`, (root) => {
+    root.querySelector('#ics').href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }))
+  })
+}
+
 // ---------- Who does what (for whoever runs the yard) ----------
 
 /** Things done in the last 7 days by a member (chores and tasks). */
@@ -1772,7 +1942,8 @@ async function teamScreen(id) {
   if (!rec) return go(`#/y/${id}`)
   const st = Y.stateOf(rec)
   const roles = Y.rolesOf(rec)
-  if (roles.get(me()) !== 'admin') return go(`#/y/${id}`)
+  const admin = roles.get(me()) === 'admin'
+  if (!admin && !st.meta.open) return go(`#/y/${id}`)
   const event = st.meta.kind === 'event'
   const members = (rec.members || []).map((m) => m.id)
   const free = [...st.items.values()].filter((i) => !i.done && !i.claimedBy)
@@ -1794,14 +1965,14 @@ async function teamScreen(id) {
       <div style="display:flex;align-items:center;gap:10px">${duck(w.look, 52, { crown: w.admin })}
         <div style="flex:1;min-width:0"><div class="q" style="margin:0">${esc(w.name)}</div>
           <span class="small muted">${open ? count(open, 'דבר אחד פתוח', 'דברים פתוחים') : 'אין כלום פתוח'} · ${done ? count(done, 'בוצע אחד השבוע', 'בוצעו השבוע') : 'עוד כלום השבוע'}</span></div>
-        ${m !== me() && open ? `<button class="pill soft" type="button" data-nudge="${m}" data-n="${open}">👋 תזכורת</button>` : ''}</div>
+        ${admin && m !== me() && open ? `<button class="pill soft" type="button" data-nudge="${m}" data-n="${open}">👋 תזכורת</button>` : ''}</div>
       ${part('באיחור', a.late)}${part('היום', a.today)}${part('מחר', a.tomorrow)}${part('השבוע', a.later, { showDay: true })}${part(event ? 'מביא/ה' : 'בלי תאריך', a.nodate, { noTime: true })}
     </section>`
   }
   $app.innerHTML = `<main class="screen">
-    <header class="top"><a class="icon-btn" href="#/y/${id}" aria-label="חזרה לחצר">${ICON.back}</a><h1>מי עושה מה<span class="sub">${esc(st.meta.emoji)} ${esc(st.meta.name)} · רק ${g('את רואה', 'אתה רואה')} את זה</span></h1></header>
+    <header class="top"><a class="icon-btn" href="#/y/${id}" aria-label="חזרה לחצר">${ICON.back}</a><h1>מי עושה מה<span class="sub">${esc(st.meta.emoji)} ${esc(st.meta.name)} · ${admin ? (st.meta.open ? 'כל החצר רואה את זה' : `רק ${g('את רואה', 'אתה רואה')} את זה`) : 'לצפייה'}</span></h1></header>
     ${free.length ? `<section class="poll" aria-label="בלי אף אחד" style="background:var(--highlight-soft)"><div class="q">👀 בלי אף אחד (${free.length})</div>
-      <ul class="list" style="margin-top:4px">${free.map((it) => `<li class="row"><span class="what" style="padding:0"><span class="t">${esc(it.name)}</span>${it.due ? `<span class="s">⏰ ${esc(whenShort(Date.parse(it.due)))}</span>` : ''}</span><button class="pill" type="button" data-give="${it.id}">לשייך</button></li>`).join('')}</ul></section>` : ''}
+      <ul class="list" style="margin-top:4px">${free.map((it) => `<li class="row"><span class="what" style="padding:0"><span class="t">${esc(it.name)}</span>${it.due ? `<span class="s">⏰ ${esc(whenShort(Date.parse(it.due)))}</span>` : ''}</span>${admin ? `<button class="pill" type="button" data-give="${it.id}">לשייך</button>` : ''}</li>`).join('')}</ul></section>` : ''}
     ${cards.map(card).join('')}
   </main>`
   $app.querySelectorAll('[data-give]').forEach((b) => (b.onclick = () => assignSheet(id, { item: b.dataset.give })))
@@ -1867,7 +2038,7 @@ function meScreen() {
   bindSave()
   $app.querySelector('#install')?.addEventListener('click', installSheet)
   bindPrivacyLinks($app)
-  $app.querySelector('#paste').onclick = pasteSheet
+  $app.querySelector('#paste').onclick = quickPaste
   $app.querySelector('#pushon')?.addEventListener('click', () => act(async () => {
     await push.enable()
     toast('ההתראות פועלות 🐥')
@@ -1914,5 +2085,6 @@ if ('serviceWorker' in navigator) {
   if (identity.load()?.keys) {
     push.refresh().catch(() => undefined)
     if (view.name === 'home') Y.refreshAll().then((n) => n && render(true)).catch(() => undefined)
+    setTimeout(askVoice, 900)
   }
 })()

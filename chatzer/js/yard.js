@@ -100,7 +100,7 @@ const localDateTime = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}
 export function fold(events, roles = new Map()) {
   const isAdmin = (m) => roles.get(m) === 'admin'
   const s = {
-    meta: { name: 'חצר', emoji: '🏡', kind: 'event', when: null, where: '' },
+    meta: { name: 'חצר', emoji: '🏡', kind: 'event', when: null, where: '', open: true },
     profiles: new Map(), items: new Map(), chores: new Map(), polls: new Map(), chat: [], lastSeq: 0,
     reports: [], hidden: new Set(),
   }
@@ -114,6 +114,7 @@ export function fold(events, roles = new Map()) {
           s.meta = {
             name: str(ev.name, 30) || 'חצר', emoji: str(ev.emoji, 8) || '🏡', kind: ev.kind === 'home' ? 'home' : 'event',
             when: typeof ev.when === 'string' && !Number.isNaN(Date.parse(ev.when)) ? ev.when : null, where: str(ev.where, 60),
+            open: ev.open !== false,
           }
         }
         break
@@ -200,7 +201,7 @@ export function fold(events, roles = new Map()) {
       case 'chore.done': {
         const c = s.chores.get(ev.id)
         if (!c) break
-        c.history = [{ by: author, at, photoId: typeof ev.photoId === 'string' ? ev.photoId : null, kind: 'done' }, ...c.history].slice(0, 30)
+        c.history = [{ by: author, at, photoId: typeof ev.photoId === 'string' ? ev.photoId : null, kind: 'done', prev: { turnOf: c.turnOf, slot: c.slot || null, lastDoneAt: c.lastDoneAt } }, ...c.history].slice(0, 30)
         c.lastDoneAt = at
         c.turnOf = nextInOrder(orderOf(c, roles), c.slot || c.turnOf, roles)
         c.slot = null
@@ -209,9 +210,18 @@ export function fold(events, roles = new Map()) {
       case 'chore.pass': {
         const c = s.chores.get(ev.id)
         if (!c || c.turnOf !== author) break
-        c.history = [{ by: author, at, kind: 'pass' }, ...c.history].slice(0, 30)
+        c.history = [{ by: author, at, kind: 'pass', prev: { turnOf: c.turnOf, slot: c.slot || null, lastDoneAt: c.lastDoneAt } }, ...c.history].slice(0, 30)
         c.turnOf = nextInOrder(orderOf(c, roles), c.slot || c.turnOf, roles)
         c.slot = null
+        break
+      }
+      case 'chore.undo': {
+        // Takes back the latest "done" or "pass", only by whoever did it (or an admin), only if nothing came after.
+        const c = s.chores.get(ev.id)
+        const h = c?.history[0]
+        if (!h || !h.prev || (h.by !== author && !isAdmin(author))) break
+        Object.assign(c, { turnOf: h.prev.turnOf, slot: h.prev.slot, lastDoneAt: h.prev.lastDoneAt })
+        c.history = c.history.slice(1)
         break
       }
 
@@ -402,6 +412,58 @@ export function plannedReminders(s, roles = new Map(), now = Date.now()) {
     if (at > now && at - now < 60 * DAY) out.push({ id: `t_${it.id}`.slice(0, 64), to: it.claimedBy || null, at, body: it.claimedBy ? `⏰ ${it.name}` : `⏰ ${it.name} (עוד אף אחד לא לקח)` })
   }
   return out
+}
+
+/** "חומוס, פיתות\nקרח" (or a pasted list with bullets) → ['חומוס', 'פיתות', 'קרח']. One line stays one item. */
+export function splitList(text) {
+  const parts = String(text || '').split(/\n|,|،|;|\u2022/).map((x) => x.replace(/^\s*(?:[-*•·✔✅☐⬜▪]+|\d+[.)])\s*/, '').trim()).filter(Boolean)
+  return [...new Set(parts.map((x) => x.slice(0, 60)))].slice(0, 40)
+}
+
+/** The yard as plain text for WhatsApp: what is taken by whom, what is free, and whose turn it is. */
+export function summaryText(s, nameOf, { link = '', now = Date.now() } = {}) {
+  const lines = [`${s.meta.emoji} ${s.meta.name}`]
+  if (s.meta.kind === 'event') {
+    if (s.meta.when) lines[0] += ` · ${new Intl.DateTimeFormat('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(s.meta.when))}`
+    if (s.meta.where) lines[0] += ` · ${s.meta.where}`
+    const items = [...s.items.values()].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
+    const free = items.filter((i) => !i.claimedBy)
+    lines.push('', 'מי מביא מה:')
+    for (const i of items.filter((x) => x.claimedBy)) lines.push(`✅ ${i.name}${i.qty ? ` (${i.qty})` : ''}: ${nameOf(i.claimedBy)}`)
+    for (const i of free) lines.push(`⬜ ${i.name}${i.qty ? ` (${i.qty})` : ''}: עוד פנוי`)
+    if (free.length) lines.push('', `עוד ${free.length === 1 ? 'דבר אחד' : `${free.length} דברים`} שאף אחד לא לקח 👀`)
+  } else {
+    lines.push('', 'תורות:')
+    for (const c of s.chores.values()) lines.push(`${c.emoji} ${c.name}: ${nameOf(c.turnOf)}${c.time ? ` (${c.time})` : ''}`)
+    const open = [...s.items.values()].filter((i) => !i.done)
+    if (open.length) {
+      lines.push('', 'משימות:')
+      for (const i of open) lines.push(`${i.claimedBy ? '✅' : '⬜'} ${i.name}${i.claimedBy ? `: ${nameOf(i.claimedBy)}` : ''}`)
+    }
+  }
+  if (link) lines.push('', `לוקחים כאן: ${link}`)
+  return lines.join('\n')
+}
+
+const icsDate = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+const icsText = (t) => String(t).replace(/[\\;,]/g, (c) => `\\${c}`).replace(/\n/g, '\\n')
+
+/** A calendar event for an event yard (3 hours from its time); null without a time. */
+export function eventIcs(s, { uid, now = Date.now(), notes = '' } = {}) {
+  if (s.meta.kind !== 'event' || !s.meta.when) return null
+  const start = Date.parse(s.meta.when)
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//hechatzer//he', 'BEGIN:VEVENT', `UID:${uid || 'yard'}@hechatzer.pages.dev`, `DTSTAMP:${icsDate(now)}`,
+    `DTSTART:${icsDate(start)}`, `DTEND:${icsDate(start + 3 * 3600e3)}`, `SUMMARY:${icsText(`${s.meta.emoji} ${s.meta.name}`)}`,
+    ...(s.meta.where ? [`LOCATION:${icsText(s.meta.where)}`] : []), ...(notes ? [`DESCRIPTION:${icsText(notes)}`] : []),
+    'BEGIN:VALARM', 'TRIGGER:-PT3H', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(s.meta.name)}`, 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
+}
+
+/** Google Calendar's "add event" link (for Android and anyone not on iPhone). */
+export function googleCalendarUrl(s, { notes = '' } = {}) {
+  if (s.meta.kind !== 'event' || !s.meta.when) return null
+  const start = Date.parse(s.meta.when)
+  const q = new URLSearchParams({ action: 'TEMPLATE', text: `${s.meta.emoji} ${s.meta.name}`, dates: `${icsDate(start)}/${icsDate(start + 3 * 3600e3)}`, location: s.meta.where || '', details: notes })
+  return `https://calendar.google.com/calendar/render?${q}`
 }
 
 /** Votes per option and who voted for what. */
