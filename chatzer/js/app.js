@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, ACCESSORIES } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.5.0'
+export const APP_VERSION = '0.5.1'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -538,6 +538,7 @@ async function homeScreen() {
     ${soon.length > 3 ? `<p class="small muted" style="margin:8px 0 0">ועוד ${soon.length - 3}</p>` : ''}</section>` : ''
   push.setBadge(recs.reduce((n, r) => n + Y.unread(r, myId), 0))
   const p = identity.profile()
+  if (!p) return welcome() // the duckling went away while this screen was loading (signed out, storage cleared)
   const showSave = recs.length > 0 && !V.saved().length && !settings.hideSave
   const showInstall = !showSave && !push.standalone() && !settings.hideInstall && recs.length > 0
   $app.innerHTML = `<main class="screen">

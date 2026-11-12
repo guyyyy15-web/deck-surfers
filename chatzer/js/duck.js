@@ -66,7 +66,8 @@ const NECK = {
 }
 
 /** `look` = { color, accessory }; `crown` = runs the yard. Faces the reading direction (left, in Hebrew). */
-export function duck(look = {}, size = 48, { label = '', crown = false } = {}) {
+export function duck(look, size = 48, { label = '', crown = false } = {}) {
+  look ||= {} // no profile yet (or just signed out): a plain yellow duckling
   const fill = colorFill(look.color)
   const acc = look.accessory || 'none'
   const eye = FACE[acc] || `<circle cx="33" cy="37" r="3.5" fill="${INK}"/><circle cx="32" cy="35.8" r="1" fill="#FFFFFF"/>`
