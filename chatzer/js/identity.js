@@ -42,7 +42,8 @@ export async function signRequest(keys, method, path, body = '') {
   return { 'X-Member': keys.memberId, 'X-Time': time, 'X-Sig': btoa(String.fromCharCode(...new Uint8Array(sig))) }
 }
 
-// { keys, profile: { nickname, color, accessory, updatedAt } }
+// { keys, profile: { nickname, color, mood, hat, face, neck, body, bodyColor, held, accessory (for older apps), updatedAt } }
+export const LOOK_KEYS = ['color', 'mood', 'hat', 'face', 'neck', 'body', 'bodyColor', 'held', 'accessory']
 export function load() {
   try {
     return JSON.parse(localStorage.getItem(KEY)) || null
@@ -60,11 +61,12 @@ export const profile = () => load()?.profile || null
 export const myId = () => load()?.keys?.memberId || null
 
 /** Saves the duckling; makes the keys the first time. */
-export async function saveProfile({ nickname, color, accessory }) {
-  if (!validName(nickname)) throw new Error('השם צריך להיות באורך 2–20 תווים')
+export async function saveProfile(v) {
+  if (!validName(v.nickname)) throw new Error('השם צריך להיות באורך 2–20 תווים')
   const cur = load()
   const keys = cur?.keys || (await newKeys())
-  const next = { keys, profile: { nickname: nickname.trim(), color, accessory, updatedAt: new Date().toISOString() } }
+  const look = Object.fromEntries(LOOK_KEYS.filter((k) => v[k] !== undefined).map((k) => [k, String(v[k]).slice(0, 16)]))
+  const next = { keys, profile: { nickname: v.nickname.trim(), ...look, updatedAt: new Date().toISOString() } }
   store(next)
   return next
 }

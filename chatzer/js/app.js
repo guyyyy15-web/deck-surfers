@@ -4,10 +4,10 @@ import * as identity from './identity.js'
 import * as db from './db.js'
 import * as push from './push.js'
 import * as V from './vault.js'
-import { duck, DUCK_COLORS, ACCESSORIES } from './duck.js'
+import { duck, DUCK_COLORS, CLOTH_COLORS, MOODS, SLOTS, lookOf, legacyAccessory } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.5.1'
+export const APP_VERSION = '0.6.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -243,7 +243,7 @@ function parade(ducks) {
   return `<div class="parade" role="img" aria-label="ברווזונים הולכים אחרי אמא ברווזה">${ducks.join('')}</div>`
 }
 const demoParade = () => parade([
-  duck({ color: 'sun' }, 90, { crown: true }), duck({ color: 'mint', accessory: 'cap' }, 60), duck({ color: 'pink', accessory: 'shades' }, 56), duck({ color: 'sky' }, 52),
+  duck({ color: 'sun' }, 90, { crown: true }), duck({ color: 'mint', hat: 'cap', body: 'tshirt', bodyColor: 'blue' }, 60), duck({ color: 'pink', face: 'shades', neck: 'scarf' }, 56), duck({ color: 'sky' }, 52),
 ])
 
 /** The duckling form: name, color, accessory, and how the app speaks to you. */
@@ -255,17 +255,28 @@ const PETS = [
 ]
 const hasPet = () => !!settings.pet && settings.pet !== 'none'
 
+/** The closet: a row per part of the look; each choice shows *your* duckling with it, so you see before you pick. */
+function closetHtml(look) {
+  const row = (slot, title, items, render) => `<span class="lbl" id="cl-${slot}">${title}</span>
+    <div class="closet-row" role="group" aria-labelledby="cl-${slot}">${items.map(render).join('')}</div>`
+  const chip = (slot, it) => `<button type="button" class="look-chip" data-slot="${slot}" data-val="${it.id}" aria-pressed="${look[slot] === it.id}">${duck({ ...look, [slot]: it.id }, 58)}<span>${it.label}</span></button>`
+  const swatch = (slot, c) => `<button type="button" class="swatch" data-slot="${slot}" data-val="${c.id}" aria-label="${c.label}" aria-pressed="${look[slot] === c.id}" style="background:${c.fill}"></button>`
+  return `<div class="closet-tools"><button type="button" class="chip-btn" data-closet="random">🎲 הפתעה</button><button type="button" class="chip-btn" data-closet="clear">בלי כלום</button></div>
+    <span class="lbl" id="cl-color">צבע</span><div class="swatches" role="group" aria-labelledby="cl-color">${DUCK_COLORS.map((c) => swatch('color', c)).join('')}</div>
+    ${row('mood', 'הבעה', MOODS, (m) => chip('mood', m))}
+    ${Object.entries(SLOTS).map(([slot, def]) => row(slot, def.label, def.items, (it) => chip(slot, it)) + (slot === 'body' && look.body !== 'none'
+      ? `<span class="lbl" id="cl-bc" style="margin-top:8px">צבע הבגד</span><div class="swatches" role="group" aria-labelledby="cl-bc">${CLOTH_COLORS.map((c) => swatch('bodyColor', c)).join('')}</div>` : '')).join('')}`
+}
+
 function duckForm(p = {}, { compact = false, pets = false } = {}) {
-  const color = p.color || 'sun'
-  const acc = p.accessory || 'none'
+  const look = lookOf(p)
   return `
     <label class="lbl" for="nick">איך קוראים לך?</label>
     <input class="input" id="nick" maxlength="20" autocomplete="nickname" value="${esc(p.nickname || '')}" placeholder="השם שיראו בחצר">
-    <span class="lbl" id="clr-l">הצבע של הברווזון</span>
-    <div class="swatches" role="group" aria-labelledby="clr-l">${DUCK_COLORS.map((c) => `<button type="button" class="swatch" data-color="${c.id}" aria-label="${c.label}" aria-pressed="${c.id === color}" style="background:${c.fill}"></button>`).join('')}</div>
-    ${compact ? `<input type="hidden" id="acc" value="${esc(acc)}">` : `
-    <span class="lbl" id="acc-l">ואיזה אביזר?</span>
-    <div class="choices" role="group" aria-labelledby="acc-l">${ACCESSORIES.map((a) => `<button type="button" class="choice" data-acc="${a.id}" aria-pressed="${a.id === acc}">${duck({ color, accessory: a.id }, 30)}${a.label}</button>`).join('')}</div>`}
+    ${compact ? `<span class="lbl" id="clr-l">הצבע של הברווזון</span>
+    <div class="swatches" role="group" aria-labelledby="clr-l">${DUCK_COLORS.slice(0, 6).map((c) => `<button type="button" class="swatch" data-slot="color" data-val="${c.id}" aria-label="${c.label}" aria-pressed="${c.id === look.color}" style="background:${c.fill}"></button>`).join('')}</div>
+    <p class="small muted" style="margin:6px 0 0">בגדים, כובעים והבעות: אחר כך, ב"הברווזון שלי".</p>`
+    : `<div id="closet">${closetHtml(look)}</div>`}
     <span class="lbl" id="voice-l">איך לפנות אלייך? אני…</span>
     <div class="choices" role="group" aria-labelledby="voice-l">
       <button type="button" class="choice" data-voice="f" aria-pressed="${settings.voice !== 'm'}">אישה</button>
@@ -275,22 +286,35 @@ function duckForm(p = {}, { compact = false, pets = false } = {}) {
     <div class="choices" role="group" aria-labelledby="pet-l">${PETS.map((x) => `<button type="button" class="choice" data-pet="${x.id}" aria-pressed="${(settings.pet || 'none') === x.id}">${x.label}</button>`).join('')}</div>
     <p class="small muted" style="margin:4px 0 0">ככה נציע גם מטלות כמו טיול עם הכלב.</p>` : ''}`
 }
-function bindDuckForm(root, onChange = () => undefined) {
-  const state = {
-    color: root.querySelector('.swatch[aria-pressed="true"]')?.dataset.color || 'sun',
-    accessory: root.querySelector('.choice[data-acc][aria-pressed="true"]')?.dataset.acc || root.querySelector('#acc')?.value || 'none',
-  }
+function bindDuckForm(root, onChange = () => undefined, start = identity.profile()) {
+  const state = lookOf(start)
   const press = (sel, el) => root.querySelectorAll(sel).forEach((b) => b.setAttribute('aria-pressed', String(b === el)))
-  root.querySelectorAll('.swatch').forEach((b) => (b.onclick = () => {
-    press('.swatch', b)
-    state.color = b.dataset.color
+  const closet = root.querySelector('#closet')
+  const pickAny = (list, none = 0.4) => (Math.random() < none ? 'none' : list[1 + Math.floor(Math.random() * (list.length - 1))].id)
+  const redraw = () => {
+    if (closet) {
+      const rows = [...closet.querySelectorAll('.closet-row')].map((r) => r.scrollLeft)
+      closet.innerHTML = closetHtml(state)
+      closet.querySelectorAll('.closet-row').forEach((r, i) => (r.scrollLeft = rows[i] || 0))
+    } else root.querySelectorAll('[data-slot="color"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.val === state.color)))
     onChange(state)
-  }))
-  root.querySelectorAll('[data-acc]').forEach((b) => (b.onclick = () => {
-    press('[data-acc]', b)
-    state.accessory = b.dataset.acc
-    onChange(state)
-  }))
+  }
+  // Listen on the form (re-created with each screen), never on #app (it stays, so listeners would pile up).
+  const host = root.querySelector('form') || root
+  host.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-slot], [data-closet]')
+    if (!b || !host.contains(b)) return
+    if (b.dataset.slot) state[b.dataset.slot] = b.dataset.val
+    else if (b.dataset.closet === 'clear') Object.assign(state, { hat: 'none', face: 'none', neck: 'none', body: 'none', held: 'none', mood: 'happy' })
+    else {
+      Object.assign(state, {
+        color: DUCK_COLORS[Math.floor(Math.random() * DUCK_COLORS.length)].id, mood: MOODS[Math.floor(Math.random() * MOODS.length)].id,
+        hat: pickAny(SLOTS.hat.items, 0.25), face: pickAny(SLOTS.face.items, 0.6), neck: pickAny(SLOTS.neck.items, 0.5),
+        body: pickAny(SLOTS.body.items, 0.3), bodyColor: CLOTH_COLORS[Math.floor(Math.random() * CLOTH_COLORS.length)].id, held: pickAny(SLOTS.held.items, 0.5),
+      })
+    }
+    redraw()
+  })
   root.querySelectorAll('[data-voice]').forEach((b) => (b.onclick = () => {
     press('[data-voice]', b)
     settings = { ...settings, voice: b.dataset.voice }
@@ -301,7 +325,7 @@ function bindDuckForm(root, onChange = () => undefined) {
     settings = { ...settings, pet: b.dataset.pet }
     db.saveSettings(settings)
   }))
-  return () => ({ nickname: root.querySelector('#nick').value, color: state.color, accessory: state.accessory })
+  return () => ({ nickname: root.querySelector('#nick').value, ...state, accessory: legacyAccessory(state) })
 }
 
 function welcome() {
@@ -1733,7 +1757,7 @@ function meScreen() {
   }[st]
   $app.innerHTML = `<main class="screen">
     <header class="top"><a class="icon-btn" href="#/" aria-label="חזרה">${ICON.back}</a><h1>הברווזון שלי</h1></header>
-    <div style="display:flex;justify-content:center;margin-top:8px" id="preview">${duck(p, 120)}</div>
+    <div class="preview-wrap" id="preview">${duck(p, 150)}</div>
     <div id="save">${saveCard()}</div>
     <form id="f" novalidate>${duckForm(p, { pets: true })}<p class="err" id="err" role="alert"></p>
       <button class="btn btn-primary btn-wide" type="submit">שמירה</button></form>
@@ -1745,7 +1769,7 @@ function meScreen() {
     <p class="muted">אין חשבון, אין מספר טלפון. השמות, הרשימות, ההודעות והתמונות מוצפנים בטלפון לפני שהם יוצאים ממנו, והשרת לא יכול לקרוא אותם.</p>
     <p class="small muted" style="margin-top:24px">החצר ${APP_VERSION}</p>
   </main>`
-  const read = bindDuckForm($app, (s) => ($app.querySelector('#preview').innerHTML = duck({ ...p, ...s }, 120)))
+  const read = bindDuckForm($app, (s) => ($app.querySelector('#preview').innerHTML = duck(s, 150)), p)
   $app.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault()
     const v = read()

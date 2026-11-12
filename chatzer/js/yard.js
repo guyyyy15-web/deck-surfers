@@ -118,7 +118,10 @@ export function fold(events, roles = new Map()) {
         }
         break
       case 'member.profile':
-        s.profiles.set(author, { nickname: str(ev.nickname, 20), color: ev.color, accessory: ev.accessory, voice: ev.voice === 'm' || ev.voice === 'f' ? ev.voice : null })
+        s.profiles.set(author, {
+          nickname: str(ev.nickname, 20), voice: ev.voice === 'm' || ev.voice === 'f' ? ev.voice : null,
+          ...Object.fromEntries(identity.LOOK_KEYS.filter((k) => typeof ev[k] === 'string').map((k) => [k, ev[k].slice(0, 16)])),
+        })
         break
 
       // Things to bring (event) or one-off tasks (home).
@@ -464,7 +467,10 @@ export async function localYards() {
 }
 export const localYard = (id) => db.getYard(id).catch(() => null)
 // How others should address me (feminine/masculine) travels with my duckling, so the yard says "מביאה" or "מביא".
-const pick = (p) => ({ nickname: p.nickname, color: p.color, accessory: p.accessory, voice: db.loadSettings().voice })
+const pick = (p) => ({
+  nickname: p.nickname, voice: db.loadSettings().voice,
+  ...Object.fromEntries(identity.LOOK_KEYS.filter((k) => p[k] !== undefined).map((k) => [k, p[k]])),
+})
 
 /** Opens a yard: meta, my duckling, and the starting items or chores, in one go. */
 export async function createYard(meta, starters = []) {
@@ -559,7 +565,7 @@ export async function refresh(yid) {
   const st = stateOf(await db.getYard(yid))
   const mine = st.profiles.get(keys.memberId)
   const want = pick(profile || {})
-  if (profile && (!mine || ['nickname', 'color', 'accessory', 'voice'].some((k) => mine[k] !== want[k]))) {
+  if (profile && (!mine || ['nickname', 'voice', ...identity.LOOK_KEYS].some((k) => mine[k] !== want[k]))) {
     await post(yid, [{ t: 'member.profile', ...want }], mine ? null : { body: `🐥 ${profile.nickname} בחצר!` })
   }
   return added

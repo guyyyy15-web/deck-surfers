@@ -239,3 +239,19 @@ test('reminders: a chore with an hour reminds whoever has the turn, on its due d
   assert.equal(by.t_t1.to, null, 'nobody took the task yet: everyone is reminded')
   assert.equal(choreRemindAt({ time: '09:00', createdAt: '2026-11-01T10:00:00', lastDoneAt: null, every: 'day' }, now) > now, true)
 })
+
+test('ducklings: an old single accessory moves into its slot; new looks keep every slot; unknown ids are ignored', async () => {
+  const { lookOf, legacyAccessory, duck } = await import('../chatzer/js/duck.js')
+  assert.equal(lookOf({ accessory: 'shades' }).face, 'shades')
+  assert.equal(lookOf({ accessory: 'scarf' }).neck, 'scarf')
+  assert.equal(lookOf({ accessory: 'cap', color: 'mint' }).hat, 'cap')
+  assert.equal(lookOf({ accessory: 'cap', hat: 'none' }).hat, 'none', 'a new profile with slots wins over the old field')
+  const l = lookOf({ color: 'pink', hat: 'chef', face: 'hearts', neck: 'pearls', body: 'dress', bodyColor: 'purple', held: 'balloon', mood: 'wink' })
+  assert.deepEqual(l, { color: 'pink', mood: 'wink', hat: 'chef', face: 'hearts', neck: 'pearls', body: 'dress', bodyColor: 'purple', held: 'balloon' })
+  assert.deepEqual(lookOf({ hat: 'jetpack', color: 'neon' }), lookOf({}), 'unknown items from a newer app are ignored')
+  assert.equal(legacyAccessory(l), 'chef')
+  assert.ok(duck(null, 20).startsWith('<svg') && duck({ accessory: 'bow' }, 20).includes('#FF6B8A'))
+  // fold keeps the whole look of a member
+  const s = fold([e(B, { t: 'member.profile', nickname: 'מאיה', color: 'mint', hat: 'beret', body: 'hoodie', bodyColor: 'black', accessory: 'beret', evil: 'x' })], roles)
+  assert.deepEqual(s.profiles.get(B), { nickname: 'מאיה', voice: null, color: 'mint', hat: 'beret', body: 'hoodie', bodyColor: 'black', accessory: 'beret' })
+})
