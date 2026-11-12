@@ -713,10 +713,12 @@ const INFO_MAX_AGE = 10 * 60e3
 export async function refresh(yid, { full = false } = {}) {
   await register()
   const known = await db.getYard(yid)
+  let got = 0 // events the quick check already brought in (counted even if a full reload follows)
   if (!full && known && !known.removed && known.keys?.[known.keyVersion] && known.mv && Date.now() - (known.infoAt || 0) < INFO_MAX_AGE) {
     try {
       await flush(yid).catch(() => undefined)
       const { added, meta } = await pull(yid)
+      got = added
       if (meta && meta.mv === known.mv && meta.keyVersion === known.keyVersion && !meta.needsRotation) {
         await afterRefresh(yid, false)
         return added
@@ -725,7 +727,7 @@ export async function refresh(yid, { full = false } = {}) {
       if (e.status !== 403 && e.status !== 404) throw e
     }
   }
-  return fullRefresh(yid)
+  return got + (await fullRefresh(yid))
 }
 
 async function fullRefresh(yid) {
@@ -758,6 +760,15 @@ async function fullRefresh(yid) {
   const { added } = await pull(yid)
   await afterRefresh(yid, fresh)
   return added
+}
+
+/** Does this yard already know my duckling as it is now (name, voice, look, morning summary)? */
+function profileKnown(rec) {
+  const { keys, profile } = me()
+  if (!profile) return true
+  const mine = stateOf(rec).profiles.get(keys.memberId)
+  const want = pick(profile)
+  return !!mine && ['nickname', 'voice', 'morning', ...identity.LOOK_KEYS].every((k) => mine[k] === want[k])
 }
 
 async function afterRefresh(yid, fresh) {
@@ -823,7 +834,7 @@ export async function refreshAll() {
   for (const g of remote) {
     const rec = await db.getYard(g.id)
     const same = rec && !rec.removed && rec.since === g.seq && rec.keyVersion === g.keyVersion && rec.role === g.role && !g.needsRotation && !rec.outbox?.length
-    if (same && Date.now() - (rec.infoAt || 0) < INFO_MAX_AGE) {
+    if (same && Date.now() - (rec.infoAt || 0) < INFO_MAX_AGE && profileKnown(rec)) {
       syncReminders(g.id).catch(() => undefined) // nothing new, but the morning summary still moves on each day
       continue
     }
