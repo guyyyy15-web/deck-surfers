@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fold, openReports, plannedReminders, choreRemindAt, splitList, summaryText, eventIcs, googleCalendarUrl, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite, parseItem, takers, isFull, eveBefore, nextMorning } from '../chatzer/js/yard.js'
+import { fold, openReports, plannedReminders, choreRemindAt, splitList, summaryText, eventIcs, googleCalendarUrl, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite, parseItem, takers, isFull, eveBefore, nextMorning, icsFile, gcalLink, RRULES } from '../chatzer/js/yard.js'
 
 const A = 'a'.repeat(24)
 const B = 'b'.repeat(24)
@@ -361,4 +361,21 @@ test('0.9: the evening before an event, each one hears what they bring; a mornin
   assert.match(d.body, /בוקר טוב.*זבל/)
   assert.ok(!plannedReminders(home('off'), roles, now).some((r) => r.id === `d_${B}`), 'turned off: no morning summary')
   assert.equal(nextMorning(new Date(2026, 10, 10, 6, 0).getTime()), new Date(2026, 10, 10, 8, 0).getTime())
+})
+
+test('0.10: calendar files made on the phone: all-day with a 9:00 reminder, repeats, Google link', () => {
+  const day = new Date(2026, 10, 16).getTime()
+  const ics = icsFile([
+    { uid: 'g1-c1', start: day, allDay: true, title: '🧹 ניקיון סלון', rrule: RRULES.week, url: 'https://x/#/y/g1' },
+    { uid: 'g1-t1', start: new Date(2026, 10, 17, 10).getTime(), title: '📌 נייר טואלט', alarms: [60, 0] },
+  ], Date.parse('2026-11-12T10:00:00Z'))
+  assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 2)
+  assert.match(ics, /DTSTART;VALUE=DATE:20261116\r\nDTEND;VALUE=DATE:20261117/)
+  assert.match(ics, /RRULE:FREQ=WEEKLY/)
+  assert.match(ics, /TRIGGER:PT540M/, 'all day: reminds at 9:00')
+  assert.match(ics, /TRIGGER:-PT60M[\s\S]*TRIGGER:PT0M/)
+  assert.match(ics, /URL:https:\/\/x\/#\/y\/g1/)
+  const link = new URL(gcalLink({ start: day, allDay: true, title: 'x', rrule: RRULES['2weeks'] }))
+  assert.equal(link.searchParams.get('dates'), '20261116/20261117')
+  assert.equal(link.searchParams.get('recur'), 'RRULE:FREQ=WEEKLY;INTERVAL=2')
 })

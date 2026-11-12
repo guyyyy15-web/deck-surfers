@@ -5,7 +5,7 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
 
 ## Where things stand (2026-11-12)
 
-- **Live:** 0.9.0 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
+- **Live:** 0.10.0 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
   Worker `chatzer-sync` serves the API (same `server/` code as `nekamot-sync`, `--env chatzer`).
 - **Users:** first real day, 14 ducklings, 7 yards, 11 active in 24h. Run `bash scripts/chatzer-stats.sh` for now.
 - **Product docs (Claude artifacts, Guy's account):**
@@ -23,6 +23,13 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
   install steps with icons, calmer board + "את מביאה", amounts ("קולה x3"), items several people bring (`need`,
   `helpers`), admin nudge (`yard.nudge`), reminder the evening before an event (`e_<member>`), morning summary in
   home yards (`d_<member>`, `morning: off` in the profile), joy hop, one tip at a time, new icon.
+- 0.10 notifications reach more people: asked right after taking something / finishing a chore (again after a
+  week, 3 times at most); in iPhone Safari the offer is "add to the home screen, or to the calendar"; a test push
+  after turning on (and a button in "הברווזון שלי"); a quiet 🔕 line in a yard when your reminders there won't
+  arrive; the admin's "מי עושה מה" shows who gets notifications (server: `push` per member in the group info).
+  "Add to calendar", made on the phone (`icsFile`, `gcalLink` in yard.js): the event with what I bring, a task
+  with a date, my chore turn (a repeating event when I'm alone in the rotation), and "הכל ליומן" for my week.
+  Calendar entries don't update by themselves (the sheet says so).
 
 ## How Guy works
 
@@ -65,6 +72,10 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
 - Cost guards (proposed 2026-11-12, waiting for his pick): a monthly R2 operations budget in the Worker that pauses
   photo uploads at 80% of the free tier; per-member rate limits; a kill switch variable (photos off / read-only);
   a daily usage check that pushes a note to Guy above 50%; a Cloudflare billing notification.
+- Notification ideas he did not pick yet: a subscribed calendar feed (server-made, generic titles because of E2E),
+  "remind on WhatsApp" for the admin, an Android app via Google Play (TWA).
+- Not verified on a real iPhone yet: that tapping "ליומן של האייפון" in the home-screen app opens the calendar
+  import (blob download with `download`); Google Calendar link is the fallback.
 - UX ideas he did not pick yet: swap a turn ("תחליפי איתי השבוע?") and vacation mode (skip me for a few days).
 - Not verified on a real phone yet: the evening-before reminder and the morning summary (tested in unit tests and
   the local Worker only). Ask Guy to confirm one arrives.

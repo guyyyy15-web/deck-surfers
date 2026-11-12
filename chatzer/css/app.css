@@ -293,6 +293,12 @@ textarea.input { padding: 12px 16px; min-height: 96px; resize: vertical; }
 @keyframes nudge-down { 50% { transform: translateY(6px); } }
 .toggle-row { display: flex; gap: 12px; align-items: flex-start; margin-top: 14px; padding: 12px 14px; border-radius: 16px; background: var(--surface); min-height: 44px; }
 .toggle-row input { width: 22px; height: 22px; margin-top: 2px; accent-color: var(--green); flex: none; }
+.tip-x { flex: none; width: 44px; height: 44px; border: 0; background: none; color: var(--ink-faint); font-size: 16px; border-radius: 12px; }
+.tip.bell { border-style: solid; background: var(--highlight-soft); color: var(--ink); }
+.tip-x { flex: none; width: 44px; height: 44px; border: 0; background: none; color: var(--ink-faint); font-size: 16px; border-radius: 12px; }
+.tip.bell { border-style: solid; background: var(--highlight-soft); color: var(--ink); }
+/* While a sheet is open, a toast (e.g. "בטל") moves to the top so it never covers the sheet's buttons. */
+body:has(.sheet-wrap) .toast { bottom: auto; top: calc(var(--safe-top) + 14px); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
 /* My day: the time column */

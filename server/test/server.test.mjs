@@ -235,6 +235,7 @@ test('groups: create, invite, peek, join, post and read events', async () => {
   assert.deepEqual(info.members.map((x) => [x.id, x.role]), [[a.id, 'admin'], [b.id, 'member']])
   assert.deepEqual(info.keys, [{ version: 1, wrapped: 'WRAPPED-B-1' }])
   assert.ok(info.members.every((x) => x.dhPub.kty === 'EC' && !x.dhPub.d))
+  assert.ok(info.members.every((x) => x.push === false), 'who gets notifications is known to the yard (nobody yet)')
   await b.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'B1' }, { keyVersion: 1, data: 'B2' }] })
   const evs = (await a.call('GET', `/v2/groups/${g}/events?since=1`)).data.events
   assert.deepEqual(evs.map((e) => [e.seq, e.author_id, e.data]), [[2, b.id, 'B1'], [3, b.id, 'B2']])

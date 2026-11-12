@@ -264,7 +264,9 @@ export async function groupsRoute(req, env, url, ctx) {
 
   if (rest === '' && m === 'GET') {
     const { results: members } = await env.DB.prepare(
-      `SELECT m.member_id AS id, m.role, m.joined_at, i.dh_pub FROM members m JOIN identities i ON i.id = m.member_id
+      `SELECT m.member_id AS id, m.role, m.joined_at, i.dh_pub,
+         EXISTS (SELECT 1 FROM push_subs s WHERE s.member_id = m.member_id) AS push
+       FROM members m JOIN identities i ON i.id = m.member_id
        WHERE m.group_id = ? AND m.removed_at IS NULL ORDER BY m.joined_at`,
     )
       .bind(gid)
@@ -277,7 +279,8 @@ export async function groupsRoute(req, env, url, ctx) {
     const muted = !!(await env.DB.prepare('SELECT 1 AS x FROM push_mutes WHERE group_id = ? AND member_id = ?').bind(gid, me).first('x'))
     return json({
       id: gid, keyVersion: group.key_version, needsRotation: !!group.needs_rotation, seq: group.seq, role, muted,
-      members: members.map((x) => ({ id: x.id, role: x.role, joinedAt: x.joined_at, dhPub: JSON.parse(x.dh_pub) })),
+      // push: whether this member gets notifications at all (so whoever runs the yard knows who will see reminders)
+      members: members.map((x) => ({ id: x.id, role: x.role, joinedAt: x.joined_at, dhPub: JSON.parse(x.dh_pub), push: !!x.push })),
       keys,
     })
   }

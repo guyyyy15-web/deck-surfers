@@ -1,6 +1,6 @@
 // Offline: every file the app needs is cached on install. Bump VERSION (and APP_VERSION in js/app.js) on
 // every change; tests/chatzer.test.mjs checks that every file is listed here.
-const VERSION = 'chatzer-v0.9.0'
+const VERSION = 'chatzer-v0.10.0'
 const CACHE = `chatzer:${VERSION}`
 // The shell is cached as './' only: Cloudflare Pages answers /index.html with a redirect to /, and a page can't be
 // opened from a redirected response (the installed app would fail to start).

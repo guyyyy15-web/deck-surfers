@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, CLOTH_COLORS, MOODS, SLOTS, lookOf, legacyAccessory } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.9.0'
+export const APP_VERSION = '0.10.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -930,7 +930,7 @@ async function yardScreen(id) {
       <button class="icon-btn" id="menu" type="button" aria-label="אפשרויות החצר">${ICON.dots}</button>
     </header>
     ${isAdmin && Y.openReports(st).length ? `<div class="nudge" style="background:var(--tile-orange)"><span style="flex:1">🚩 ${count(Y.openReports(st).length, 'דיווח פתוח', 'דיווחים פתוחים')} בחצר</span><button class="pill soft" id="reports" type="button">לטפל</button></div>` : ''}
-    ${tipHtml(st.meta.kind)}
+    ${bellHtml(rec, st, myId) || tipHtml(st.meta.kind)}
     ${body}
     ${polls}
     <div class="actions-bar">
@@ -1093,6 +1093,15 @@ function bindYard(rec, st, roles, myId) {
   $('#poll').onclick = () => pollSheet(id)
   $('#newchore')?.addEventListener('click', () => newChoreSheet(id))
   $('#nudgefree')?.addEventListener('click', (e) => nudgeFree(rec, st, e.currentTarget))
+  $('#bellon')?.addEventListener('click', async () => {
+    if (push.status() === 'needs-install') return installSheet()
+    if (await turnPushOn()) render(true)
+  })
+  $('#bellx')?.addEventListener('click', () => {
+    settings = { ...settings, bellHidden: { ...(settings.bellHidden || {}), [id]: Date.now() } }
+    db.saveSettings(settings)
+    $('.bell')?.remove()
+  })
   $('#tipok')?.addEventListener('click', () => {
     settings = { ...settings, tips: [...(settings.tips || []), $('#tipok').dataset.tip] }
     db.saveSettings(settings)
@@ -1188,7 +1197,14 @@ async function claim(id, itemId, on, btn) {
   })
   await closeSheet()
   await render(true)
-  maybeAskPush()
+  if (on) {
+    const st = Y.stateOf(await Y.localYard(id))
+    const it = st.items.get(itemId)
+    if (it && Y.takers(it).includes(me())) {
+      const event = st.meta.kind === 'event'
+      maybeAskPush({ why: event ? 'event' : 'task', cal: it.due ? () => itemCalendar(id, itemId) : event && st.meta.when ? () => calendarSheet(id) : null })
+    }
+  }
 }
 
 async function vote(id, pollId, opt) {
@@ -1241,6 +1257,8 @@ async function itemSheet(id, itemId) {
   if (!event && !it.done && (it.claimedBy === myId || !it.claimedBy)) btns.push('<button class="btn btn-soft" data-a="done">בוצע + הוכחה</button>')
   if (!it.done && ts.length && (mine || isAdmin)) btns.push(`<button class="btn btn-ghost" data-a="unclaim">${mine ? 'בעצם לא אוכל' : 'לשחרר את הפריט'}</button>`)
   if (it.done && (it.doneBy === myId || isAdmin)) btns.push('<button class="btn btn-ghost" data-a="undone">לבטל את הסימון</button>')
+  if (!it.done && it.due && (mine || !ts.length)) btns.push('<button class="btn btn-ghost" data-a="cal">📅 ליומן, עם תזכורת</button>')
+  else if (event && mine && st.meta.when) btns.push('<button class="btn btn-ghost" data-a="evcal">📅 האירוע ליומן, עם מה שמביאים</button>')
   openSheet(`<h2>${esc(it.name)}${it.qty ? ` (${esc(it.qty)})` : ''}</h2>
     <p class="lead">${esc(status)}${it.due ? ` · ⏰ ${esc(whenShort(Date.parse(it.due)))}` : ''}</p>
     ${it.photoId && !st.hidden.has(it.photoId) ? `<img data-photo="${it.photoId}" alt="תמונת הוכחה" style="width:100%;border-radius:18px;margin-top:12px"><button class="link-btn" type="button" data-photoact="${it.photoId}">${isAdmin ? 'הסתרת התמונה מכולם' : 'דיווח על התמונה'}</button>` : ''}
@@ -1253,6 +1271,8 @@ async function itemSheet(id, itemId) {
     root.querySelectorAll('[data-a]').forEach((b) => (b.onclick = async () => {
       const a = b.dataset.a
       if (a === 'assign') return assignSheet(id, { item: itemId })
+      if (a === 'cal') return itemCalendar(id, itemId)
+      if (a === 'evcal') return calendarSheet(id)
       if (a === 'claim') return claim(id, itemId, true, b)
       if (a === 'unclaim') return claim(id, itemId, false, b)
       if (a === 'done') return doneSheet(id, { item: itemId })
@@ -1300,7 +1320,7 @@ async function choreSheet(id, choreId) {
     <p class="lead">${esc(Y.EVERY[c.every].label)}${c.time ? ` · בשעה ${c.time}` : ''} · ${c.everyone ? 'כל החצר בסבב' : count(order.length, 'ברווזון אחד בסבב', 'ברווזונים בסבב')}</p>
     <span class="lbl">התור</span>
     <div style="display:flex;flex-wrap:wrap;gap:10px">${order.map((m) => `<span style="display:flex;flex-direction:column;align-items:center;gap:2px;font-size:13px;${m === turn ? 'font-weight:700' : 'opacity:.75'}">${duckOf(st, rec, m, m === turn ? 44 : 34)}${esc(who(st, rec, m).name)}${m === turn ? ' ⬅' : ''}</span>`).join('')}</div>
-    <div class="stack"><button class="btn btn-primary" data-a="done">בוצע + הוכחה</button>${turn === myId && order.length > 1 ? `<button class="btn btn-ghost" data-a="pass">להעביר ל${esc(who(st, rec, Y.nextInOrder(order, turn, roles)).name)}</button>` : ''}</div>
+    <div class="stack"><button class="btn btn-primary" data-a="done">בוצע + הוכחה</button>${turn === myId && order.length > 1 ? `<button class="btn btn-ghost" data-a="pass">להעביר ל${esc(who(st, rec, Y.nextInOrder(order, turn, roles)).name)}</button>` : ''}${turn === myId ? `<button class="btn btn-ghost" data-a="cal">📅 ${order.length === 1 ? 'ליומן (חוזר), עם תזכורת' : 'התור שלי ליומן, עם תזכורת'}</button>` : ''}</div>
     ${hist ? `<span class="lbl">מה היה</span><ul class="history">${hist}</ul>` : ''}
     ${roles.get(myId) === 'admin' && (rec.members || []).length > 1 ? '<div class="stack"><button class="btn btn-soft" data-a="assign">👉 לתת את התור הזה למישהו אחר</button></div>' : ''}
     ${canEdit ? '<div class="stack"><button class="btn btn-ghost" data-a="edit">✏️ עריכת המטלה</button><button class="btn btn-danger" data-a="delete">למחוק את המטלה</button></div>' : ''}`, (root) => {
@@ -1308,6 +1328,7 @@ async function choreSheet(id, choreId) {
     root.querySelector('[data-a="assign"]')?.addEventListener('click', () => assignSheet(id, { chore: choreId }))
     root.querySelector('[data-a="edit"]')?.addEventListener('click', () => newChoreSheet(id, choreId))
     root.querySelector('[data-a="pass"]')?.addEventListener('click', () => passTurn(id, choreId))
+    root.querySelector('[data-a="cal"]')?.addEventListener('click', () => choreCalendar(id, choreId))
     root.querySelector('[data-a="delete"]')?.addEventListener('click', async () => {
       if (!confirm(`למחוק את "${c.name}"?`)) return
       await act(() => Y.post(id, [{ t: 'chore.delete', id: choreId }]))
@@ -1552,7 +1573,7 @@ async function doneSheet(id, target) {
         await render(true)
       }) })
       await render(true)
-      maybeAskPush()
+      maybeAskPush({ why: target.chore ? 'chore' : 'task' })
     }
   })
 }
@@ -1899,21 +1920,63 @@ window.addEventListener('beforeinstallprompt', (e) => {
 
 // ---------- Notifications ----------
 
-function maybeAskPush() {
-  if (!push.shouldAsk()) return
-  push.markAsked()
-  setTimeout(() => openSheet(`<h2>רוצה לדעת כשתורך? 🔔</h2>
-    <p class="lead">נשלח התראה רק כשמשהו נוגע בך: תורך, משהו חדש ברשימה, הצבעה או הודעה. אפשר להשתיק כל חצר.</p>
-    <div class="stack"><button class="btn btn-primary" id="yes" type="button">כן, ${g('תודיעו', 'תודיעו')} לי</button><button class="link-btn" id="no" type="button">אולי אחר כך</button></div>`, (root) => {
-    root.querySelector('#yes').onclick = async () => {
-      await act(async () => {
-        await push.enable()
-        toast('ההתראות פועלות 🐥')
-      })
-      await closeSheet()
-    }
-    root.querySelector('#no').onclick = closeSheet
-  }), 600)
+/** Turns notifications on (from a tap) and sends a test one right away, so you see it works. */
+async function turnPushOn() {
+  return act(async () => {
+    await push.enable()
+    toast('ההתראות פועלות 🐥 שלחנו אחת לבדיקה')
+    push.test().catch(() => undefined)
+    return true
+  })
+}
+
+/**
+ * After something you did (took an item, finished a chore): the moment a reminder makes sense. `why`: 'event' |
+ * 'chore' | 'task'; `cal`: how to put this one thing in the calendar instead. Asked again after a week, 3 times at most.
+ */
+function maybeAskPush({ why = '', cal = null } = {}) {
+  const texts = {
+    event: ['רוצה תזכורת ערב לפני? 🔔', `נשלח לך ב־19:00, ערב לפני, את מה ש${g('את מביאה', 'אתה מביא')}. רק דברים שנוגעים בך.`],
+    chore: ['רוצה לדעת כשתורך שוב? 🔔', 'נשלח התראה כשמגיע תורך, ובבוקר סיכום קצר של מה שמחכה לך. אפשר להשתיק כל חצר.'],
+    '': ['רוצה לדעת כשתורך? 🔔', 'נשלח התראה רק כשמשהו נוגע בך: תורך, משהו חדש ברשימה, הצבעה או הודעה. אפשר להשתיק כל חצר.'],
+  }
+  if (push.shouldAsk()) {
+    push.markAsked()
+    const [title, lead] = texts[why] || texts['']
+    setTimeout(() => openSheet(`<h2>${title}</h2><p class="lead">${lead}</p>
+      <div class="stack"><button class="btn btn-primary" id="yes" type="button">כן, ${g('תזכירו', 'תזכירו')} לי</button>${cal ? '<button class="btn btn-ghost" id="cal" type="button">📅 ליומן במקום</button>' : ''}<button class="link-btn" id="no" type="button">אולי אחר כך</button></div>`, (root) => {
+      root.querySelector('#yes').onclick = async () => {
+        await turnPushOn()
+        await closeSheet()
+        render(true)
+      }
+      root.querySelector('#cal')?.addEventListener('click', () => cal())
+      root.querySelector('#no').onclick = closeSheet
+    }), 600)
+  } else if (push.shouldOfferInstall()) {
+    push.markOfferedInstall()
+    setTimeout(() => openSheet(`<h2>בספארי תזכורות לא מגיעות 🔕</h2>
+      <p class="lead">אייפון שולח התראות רק לאפליקציה שעל מסך הבית. שתי דרכים לא לפספס:</p>
+      <div class="stack"><button class="btn btn-primary" id="inst" type="button">📲 להוסיף למסך הבית</button>${cal ? '<button class="btn btn-soft" id="cal" type="button">📅 ליומן של האייפון</button>' : ''}<button class="link-btn" id="no" type="button">לא עכשיו</button></div>`, (root) => {
+      root.querySelector('#inst').onclick = () => installSheet()
+      root.querySelector('#cal')?.addEventListener('click', () => cal())
+      root.querySelector('#no').onclick = closeSheet
+    }), 600)
+  }
+}
+
+/** In a yard: a quiet line when reminders here won't reach you (dismissed for a week per yard). */
+function bellHtml(rec, st, myId) {
+  const status = push.status()
+  if (!['off', 'needs-install', 'denied'].includes(status)) return ''
+  if (Date.now() - (settings.bellHidden?.[rec.id] || 0) < 7 * 86400e3) return ''
+  if (!Y.plannedReminders(st, Y.rolesOf(rec)).some((r) => r.to === myId || r.to === null)) return ''
+  const [text, btn] = {
+    off: ['יש לך כאן תזכורות, אבל ההתראות כבויות.', 'להפעיל'],
+    'needs-install': ['יש לך כאן תזכורות, אבל בספארי הן לא מגיעות.', 'איך מקבלים?'],
+    denied: ['ההתראות חסומות בהגדרות של הטלפון (הגדרות ← החצר ← התראות). אפשר גם "הכל ליומן" ב"היום שלי".', ''],
+  }[status]
+  return `<div class="tip bell"><span aria-hidden="true">🔕</span><span style="flex:1">${text}</span>${btn ? `<button class="pill soft" id="bellon" type="button">${btn}</button>` : ''}<button class="tip-x" id="bellx" type="button" aria-label="לא עכשיו">✕</button></div>`
 }
 
 // ---------- My day ----------
@@ -1985,8 +2048,22 @@ async function todayScreen() {
     ${section('היום', a.today)}
     ${section('מחר', a.tomorrow)}
     ${section('בהמשך השבוע', a.later, { showDay: true })}
-    <p class="small muted" style="margin-top:20px">${push.status() === 'on' ? 'תזכורות נשלחות בשעה שנקבעה.' : 'רוצה תזכורת בשעה שנקבעה? מפעילים התראות במסך "הברווזון שלי".'}</p>
+    ${empty ? '' : `<div class="stack"><button class="btn btn-soft" id="allcal" type="button">📅 הכל ליומן של הטלפון</button></div>`}
+    <p class="small muted" style="margin-top:20px">${push.status() === 'on' ? 'תזכורות נשלחות בשעה שנקבעה.' : 'בלי התראות? "הכל ליומן" שם כל אחד מאלה ביומן של הטלפון, עם תזכורת.'}</p>
   </main>`
+  $app.querySelector('#allcal')?.addEventListener('click', () => {
+    const list = [...a.late, ...a.today, ...a.tomorrow, ...a.later]
+    const today = dayStart()
+    calSheet({
+      title: 'השבוע שלי ביומן', file: 'החצר - השבוע שלי',
+      lead: `${count(list.length, 'דבר אחד', 'דברים')} מהשבוע הקרוב, כל אחד עם תזכורת.`,
+      events: list.map((x) => {
+        const start = x.late ? (x.allDay ? today : Math.max(x.at, Date.now() + 5 * 60e3)) : x.at
+        const ref = x.ref?.chore || x.ref?.item || 'event'
+        return { uid: `${x.yard.id}-${ref}-${dayStart(start)}`, start, allDay: x.allDay, minutes: x.ref ? 60 : 180, title: `${x.emoji} ${x.name}`, notes: [x.note, `${x.yard.emoji} ${x.yard.name}`].filter(Boolean).join('\n'), url: yardUrl(x.yard.id), alarms: x.ref ? undefined : [1440, 180] }
+      }),
+    })
+  })
 }
 
 // ---------- Summary for WhatsApp, and the calendar ----------
@@ -2031,21 +2108,68 @@ async function summarySheet(id) {
   })
 }
 
+const yardUrl = (id) => `${location.origin}${location.pathname}#/y/${id}`
+
+/**
+ * "Add to calendar": an .ics file made on this phone (the iPhone calendar, Outlook…) and, for a single event, a
+ * Google Calendar link. The calendar then reminds by itself, even when the app is closed.
+ */
+function calSheet({ title, lead, events, file }) {
+  const ics = Y.icsFile(events)
+  const gcal = events.length === 1 ? Y.gcalLink(events[0]) : null
+  openSheet(`<h2>📅 ${esc(title)}</h2>
+    <p class="lead">${lead}</p>
+    <div class="stack">
+      <a class="btn btn-primary" id="ics" href="#" download="${esc(file)}.ics">${push.isIOS() ? 'ליומן של האייפון' : 'קובץ ליומן'}</a>
+      ${gcal ? `<a class="btn btn-ghost" id="gcal" href="${esc(gcal)}" target="_blank" rel="noopener">Google Calendar</a>` : ''}
+    </div>
+    <p class="fine">היומן לא מתעדכן לבד: אם משהו משתנה בחצר, מוסיפים שוב.</p>`, (root) => {
+    root.querySelector('#ics').href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }))
+  })
+}
+const remindText = (alarms = [0]) => alarms.map((m) => (m === 0 ? 'בזמן' : m === -540 ? 'ב־9:00 באותו יום' : m >= 1440 ? 'יום לפני' : m >= 60 ? `${m / 60} שעות לפני`.replace('1 שעות', 'שעה') : `${m} דקות לפני`)).join(' ו')
+
 async function calendarSheet(id) {
   const rec = await Y.localYard(id)
   const st = Y.stateOf(rec)
-  const mine = [...st.items.values()].filter((i) => Y.takers(i).includes(me())).map((i) => i.name)
+  if (st.meta.kind !== 'event' || !st.meta.when) return toast('לאירוע אין עדיין תאריך')
+  const mine = [...st.items.values()].filter((i) => Y.takers(i).includes(me())).map((i) => i.name + (i.qty ? ` ×${i.qty}` : ''))
   const notes = mine.length ? `${g('אני מביאה', 'אני מביא')}: ${mine.join(', ')}` : ''
-  const ics = Y.eventIcs(st, { uid: id, notes })
-  const gcal = Y.googleCalendarUrl(st, { notes })
-  if (!ics) return toast('לאירוע אין עדיין תאריך')
-  openSheet(`<h2>📅 ${esc(st.meta.name)} ביומן</h2>
-    <p class="lead">${esc(whenText(st.meta.when))}${st.meta.where ? ` · ${esc(st.meta.where)}` : ''}. עם תזכורת 3 שעות לפני.</p>
-    <div class="stack">
-      <a class="btn btn-primary" id="ics" href="#" download="${esc(st.meta.name)}.ics">${push.isIOS() ? 'ליומן של האייפון' : 'קובץ ליומן'}</a>
-      <a class="btn btn-ghost" href="${esc(gcal)}" target="_blank" rel="noopener">Google Calendar</a>
-    </div>`, (root) => {
-    root.querySelector('#ics').href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }))
+  calSheet({
+    title: `${st.meta.name} ביומן`, file: st.meta.name,
+    lead: `${esc(whenText(st.meta.when))}${st.meta.where ? ` · ${esc(st.meta.where)}` : ''}. תזכורת יום לפני ו־3 שעות לפני${mine.length ? `, עם מה ש${g('את מביאה', 'אתה מביא')}` : ''}.`,
+    events: [{ uid: id, start: Date.parse(st.meta.when), minutes: 180, title: `${st.meta.emoji} ${st.meta.name}`, where: st.meta.where, notes, url: yardUrl(id), alarms: [1440, 180] }],
+  })
+}
+
+/** A task (or an item) with a date, to the calendar. */
+async function itemCalendar(id, itemId) {
+  const st = Y.stateOf(await Y.localYard(id))
+  const it = st.items.get(itemId)
+  if (!it?.due) return
+  calSheet({
+    title: `${it.name} ביומן`, file: it.name,
+    lead: `${esc(whenShort(Date.parse(it.due)))}. תזכורת ${remindText([60, 0])}.`,
+    events: [{ uid: `${id}-${itemId}`, start: Date.parse(it.due), title: `📌 ${it.name}`, notes: `${st.meta.emoji} ${st.meta.name}`, url: yardUrl(id), alarms: [60, 0] }],
+  })
+}
+
+/** My turn of a chore, to the calendar. Alone in the rotation: the calendar repeats it; otherwise just this turn. */
+async function choreCalendar(id, choreId) {
+  const rec = await Y.localYard(id)
+  const st = Y.stateOf(rec)
+  const roles = Y.rolesOf(rec)
+  const c = st.chores.get(choreId)
+  if (!c) return
+  const late = Y.dueState(c) === 'late'
+  const day = late ? dayStart() : dayStart(Y.dueAt(c))
+  const start = c.time ? new Date(day).setHours(...c.time.split(':').map(Number), 0, 0) : day
+  const alone = Y.orderOf(c, roles).filter((m) => !roles.size || roles.has(m)).length === 1
+  const ev = { uid: `${id}-${choreId}${alone ? '' : `-${day}`}`, start, allDay: !c.time, title: `${c.emoji} ${c.name}`, notes: `${st.meta.emoji} ${st.meta.name}`, url: yardUrl(id), rrule: alone ? Y.RRULES[c.every] : '' }
+  calSheet({
+    title: `${c.name} ביומן`, file: c.name,
+    lead: `${alone ? `${esc(Y.EVERY[c.every].label)}, חוזר ביומן` : `התור שלך: ${esc(new Intl.DateTimeFormat('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric' }).format(new Date(day)))}`}${c.time ? ` בשעה ${c.time}` : ''}. תזכורת ${remindText(c.time ? [0] : [-540])}.`,
+    events: [ev],
   })
 }
 
@@ -2082,11 +2206,13 @@ async function teamScreen(id) {
     <span class="emo" aria-hidden="true">${esc(x.emoji)}</span>
     <span class="what" style="padding:0"><span class="t">${esc(x.name)}</span>${x.note ? `<span class="s${x.late ? ' warn' : ''}">${esc(x.note)}</span>` : ''}</span></button></li>`
   const part = (title, list, opts) => (list.length ? `<span class="lbl" style="margin-top:10px">${title}</span><ul class="list" style="margin-top:4px">${list.map((x) => line(x, opts)).join('')}</ul>` : '')
+  const hasPush = new Map((rec.members || []).map((x) => [x.id, x.push]))
+  const known = (rec.members || []).some((x) => typeof x.push === 'boolean')
   const card = ({ m, a, open, done }) => {
     const w = who(st, rec, m)
     return `<section class="poll team-card" aria-label="${esc(w.name)}">
       <div style="display:flex;align-items:center;gap:10px">${duck(w.look, 52, { crown: w.admin })}
-        <div style="flex:1;min-width:0"><div class="q" style="margin:0">${esc(w.name)}</div>
+        <div style="flex:1;min-width:0"><div class="q" style="margin:0">${esc(w.name)}${admin && known && hasPush.get(m) === false ? ' <span class="small muted" title="בלי התראות">🔕</span>' : ''}</div>
           <span class="small muted">${open ? count(open, 'דבר אחד פתוח', 'דברים פתוחים') : 'אין כלום פתוח'} · ${done ? count(done, 'בוצע אחד השבוע', 'בוצעו השבוע') : 'עוד כלום השבוע'}</span></div>
         ${admin && m !== me() && open ? `<button class="pill soft" type="button" data-nudge="${m}" data-n="${open}">👋 תזכורת</button>` : ''}</div>
       ${part('באיחור', a.late)}${part('היום', a.today)}${part('מחר', a.tomorrow)}${part('השבוע', a.later, { showDay: true })}${part(event ? 'מביא/ה' : 'בלי תאריך', a.nodate, { noTime: true })}
@@ -2096,6 +2222,7 @@ async function teamScreen(id) {
     <header class="top"><a class="icon-btn" href="#/y/${id}" aria-label="חזרה לחצר">${ICON.back}</a><h1>מי עושה מה<span class="sub">${esc(st.meta.emoji)} ${esc(st.meta.name)} · ${admin ? (st.meta.open ? 'כל החצר רואה את זה' : `רק ${g('את רואה', 'אתה רואה')} את זה`) : 'לצפייה'}</span></h1></header>
     ${free.length ? `<section class="poll" aria-label="בלי אף אחד" style="background:var(--highlight-soft)"><div class="q">👀 בלי אף אחד (${free.length})</div>
       <ul class="list" style="margin-top:4px">${free.map((it) => `<li class="row"><span class="what" style="padding:0"><span class="t">${esc(it.name)}</span>${it.due ? `<span class="s">⏰ ${esc(whenShort(Date.parse(it.due)))}</span>` : ''}</span>${admin ? `<button class="pill" type="button" data-give="${it.id}">לשייך</button>` : ''}</li>`).join('')}</ul></section>` : ''}
+    ${admin && known ? `<p class="small muted" style="margin:10px 4px 0">🔔 ${[...hasPush.values()].filter(Boolean).length} מתוך ${hasPush.size} מקבלים התראות. ל־🔕 תזכורות לא יגיעו: אפשר להזכיר בוואטסאפ, או לבקש שיוסיפו ליומן.</p>` : ''}
     ${cards.map(card).join('')}
   </main>`
   $app.querySelectorAll('[data-give]').forEach((b) => (b.onclick = () => assignSheet(id, { item: b.dataset.give })))
@@ -2125,7 +2252,7 @@ function meScreen() {
     unsupported: '<p class="muted">הדפדפן הזה לא תומך בהתראות.</p>',
     'needs-duck': '',
     denied: '<p class="muted">ההתראות חסומות בהגדרות הטלפון. אפשר לאפשר אותן שם ולחזור לכאן.</p>',
-    on: '<p class="muted">ההתראות פועלות. אפשר להשתיק חצר מסוימת מהתפריט שלה.</p><button class="btn btn-ghost" id="pushoff" type="button">לכבות התראות</button>',
+    on: '<p class="muted">ההתראות פועלות. אפשר להשתיק חצר מסוימת מהתפריט שלה.</p><div class="stack"><button class="btn btn-soft" id="pushtest" type="button">🔔 לשלוח לי התראת ניסיון</button><button class="btn btn-ghost" id="pushoff" type="button">לכבות התראות</button></div>',
     off: '<button class="btn btn-soft" id="pushon" type="button">להפעיל התראות</button>',
   }[st]
   $app.innerHTML = `<main class="screen">
@@ -2169,10 +2296,13 @@ function meScreen() {
   }
   bindPrivacyLinks($app)
   $app.querySelector('#paste').onclick = quickPaste
-  $app.querySelector('#pushon')?.addEventListener('click', () => act(async () => {
-    await push.enable()
-    toast('ההתראות פועלות 🐥')
-    meScreen()
+  $app.querySelector('#pushon')?.addEventListener('click', async () => {
+    if (await turnPushOn()) meScreen()
+  })
+  $app.querySelector('#pushtest')?.addEventListener('click', (e) => act(async () => {
+    busy(e.currentTarget, true, 'שולחת…')
+    const r = await push.test().finally(() => busy(e.currentTarget, false))
+    toast(r?.ok ? 'נשלחה! אם לא הגיעה תוך דקה, בודקים בהגדרות הטלפון ← החצר ← התראות' : 'לא הצלחתי לשלוח. אפשר לכבות ולהפעיל שוב')
   }))
   $app.querySelector('#pushoff')?.addEventListener('click', () => act(async () => {
     await push.disable()

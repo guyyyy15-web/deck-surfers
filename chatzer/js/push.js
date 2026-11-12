@@ -72,9 +72,25 @@ export async function refresh() {
   write(FLAG, { on: true, endpoint: sub.endpoint, savedAt: Date.now() })
 }
 
-/** Ask once, after the first thing someone does in a yard (never on first launch). */
-export const shouldAsk = () => status() === 'off' && !read(ASKED)
-export const markAsked = () => write(ASKED, Date.now())
+// Asked after something someone did in a yard (never on first launch); again after a week, at most 3 times.
+const askedState = (k) => {
+  const a = read(k)
+  if (!a) return { at: 0, n: 0 }
+  return typeof a === 'number' ? { at: a, n: 1 } : a
+}
+const mayAsk = (k) => {
+  const a = askedState(k)
+  return a.n === 0 || (a.n < 3 && Date.now() - a.at > 7 * 86400e3)
+}
+const bump = (k) => write(k, { at: Date.now(), n: askedState(k).n + 1 })
+export const shouldAsk = () => status() === 'off' && mayAsk(ASKED)
+export const markAsked = () => bump(ASKED)
+/** iPhone in Safari: offer the home screen (or the calendar) instead, on the same terms. */
+export const shouldOfferInstall = () => status() === 'needs-install' && mayAsk('cz.installAsked')
+export const markOfferedInstall = () => bump('cz.installAsked')
+
+/** "Send me a test notification" (the server sends one to each of my phones). */
+export const test = () => Y.api('POST', '/v2/push/test')
 
 export function setBadge(n) {
   try {

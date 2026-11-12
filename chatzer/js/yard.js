@@ -504,21 +504,54 @@ const icsDate = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(
 const icsText = (t) => String(t).replace(/[\\;,]/g, (c) => `\\${c}`).replace(/\n/g, '\\n')
 
 /** A calendar event for an event yard (3 hours from its time); null without a time. */
-export function eventIcs(s, { uid, now = Date.now(), notes = '' } = {}) {
-  if (s.meta.kind !== 'event' || !s.meta.when) return null
-  const start = Date.parse(s.meta.when)
-  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//hechatzer//he', 'BEGIN:VEVENT', `UID:${uid || 'yard'}@hechatzer.pages.dev`, `DTSTAMP:${icsDate(now)}`,
-    `DTSTART:${icsDate(start)}`, `DTEND:${icsDate(start + 3 * 3600e3)}`, `SUMMARY:${icsText(`${s.meta.emoji} ${s.meta.name}`)}`,
-    ...(s.meta.where ? [`LOCATION:${icsText(s.meta.where)}`] : []), ...(notes ? [`DESCRIPTION:${icsText(notes)}`] : []),
-    'BEGIN:VALARM', 'TRIGGER:-PT3H', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(s.meta.name)}`, 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
+const icsDay = (ms) => {
+  const d = new Date(ms)
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+}
+const trigger = (min) => (min === 0 ? 'PT0M' : min > 0 ? `-PT${min}M` : `PT${-min}M`)
+/** A chore's "every" as a calendar repeat rule. */
+export const RRULES = { day: 'FREQ=DAILY', week: 'FREQ=WEEKLY', '2weeks': 'FREQ=WEEKLY;INTERVAL=2', month: 'FREQ=MONTHLY' }
+
+/**
+ * Events → one .ics file, made on the phone (the server never sees it). Each event:
+ * { uid, start, minutes = 60, allDay, title, notes, where, url, rrule, alarms: minutes before (negative = after start) }.
+ * All-day events remind at 9:00 by default.
+ */
+export function icsFile(events, now = Date.now()) {
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//hechatzer//he', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH']
+  for (const e of events) {
+    L.push('BEGIN:VEVENT', `UID:${String(e.uid).replace(/[^\w.-]/g, '')}@hechatzer.pages.dev`, `DTSTAMP:${icsDate(now)}`)
+    if (e.allDay) L.push(`DTSTART;VALUE=DATE:${icsDay(e.start)}`, `DTEND;VALUE=DATE:${icsDay(startOfDay(e.start) + DAY + 3 * 3600e3)}`)
+    else L.push(`DTSTART:${icsDate(e.start)}`, `DTEND:${icsDate(e.start + (e.minutes || 60) * 60e3)}`)
+    L.push(`SUMMARY:${icsText(e.title)}`)
+    if (e.where) L.push(`LOCATION:${icsText(e.where)}`)
+    if (e.notes || e.url) L.push(`DESCRIPTION:${icsText([e.notes, e.url].filter(Boolean).join('\n'))}`)
+    if (e.url) L.push(`URL:${e.url}`)
+    if (e.rrule) L.push(`RRULE:${e.rrule}`)
+    for (const a of e.alarms || (e.allDay ? [-540] : [0])) L.push('BEGIN:VALARM', `TRIGGER:${trigger(a)}`, 'ACTION:DISPLAY', `DESCRIPTION:${icsText(e.title)}`, 'END:VALARM')
+    L.push('END:VEVENT')
+  }
+  L.push('END:VCALENDAR')
+  return L.join('\r\n')
 }
 
-/** Google Calendar's "add event" link (for Android and anyone not on iPhone). */
-export function googleCalendarUrl(s, { notes = '' } = {}) {
-  if (s.meta.kind !== 'event' || !s.meta.when) return null
-  const start = Date.parse(s.meta.when)
-  const q = new URLSearchParams({ action: 'TEMPLATE', text: `${s.meta.emoji} ${s.meta.name}`, dates: `${icsDate(start)}/${icsDate(start + 3 * 3600e3)}`, location: s.meta.where || '', details: notes })
+/** The same event as a Google Calendar "add event" link (Android, and anyone not on iPhone). */
+export function gcalLink(e) {
+  const dates = e.allDay ? `${icsDay(e.start)}/${icsDay(startOfDay(e.start) + DAY + 3 * 3600e3)}` : `${icsDate(e.start)}/${icsDate(e.start + (e.minutes || 60) * 60e3)}`
+  const q = new URLSearchParams({ action: 'TEMPLATE', text: e.title, dates, details: [e.notes, e.url].filter(Boolean).join('\n'), location: e.where || '' })
+  if (e.rrule) q.set('recur', `RRULE:${e.rrule}`)
   return `https://calendar.google.com/calendar/render?${q}`
+}
+
+/** The event yard as a calendar event: 3 hours, reminders the day before and 3 hours before. */
+const eventOf = (s, { uid, notes = '', url = '' }) => ({ uid: uid || 'yard', start: Date.parse(s.meta.when), minutes: 180, title: `${s.meta.emoji} ${s.meta.name}`, where: s.meta.where, notes, url, alarms: [1440, 180] })
+export function eventIcs(s, { uid, now = Date.now(), notes = '', url = '' } = {}) {
+  if (s.meta.kind !== 'event' || !s.meta.when) return null
+  return icsFile([eventOf(s, { uid, notes, url })], now)
+}
+export function googleCalendarUrl(s, { notes = '', url = '' } = {}) {
+  if (s.meta.kind !== 'event' || !s.meta.when) return null
+  return gcalLink(eventOf(s, { notes, url }))
 }
 
 /** Votes per option and who voted for what. */
