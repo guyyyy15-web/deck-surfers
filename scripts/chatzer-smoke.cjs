@@ -281,6 +281,26 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     const reminders = JSON.parse(execFileSync('npx', ['wrangler', 'd1', 'execute', 'nekamot-sync', '--local', '--persist-to', persist, '--json', '--command', 'SELECT id, member_id FROM reminders'], { cwd: SERVER, env, stdio: 'pipe' }).toString())[0].results
     check(reminders.some((r) => r.id.startsWith('c_')) && reminders.some((r) => r.id.startsWith('t_') && r.member_id === null), `reminders scheduled on the server (${reminders.length}): the 20:00 dishes, and the dated task for everyone`)
 
+    // 7c. Who does what: the admin sees each duckling's open things and schedule, and nudges Maya.
+    await sync(noa)
+    await noa.page.click('a:has-text("מי עושה מה")')
+    await noa.page.waitForSelector('text=רק את רואה את זה')
+    const mayaCard = noa.page.locator('.team-card', { hasText: 'מאיה' })
+    check(await mayaCard.locator('text=להוריד את הזבל').isVisible(), 'the admin sees that the trash is with Maya')
+    check(await noa.page.isVisible('.team-card[aria-label="את"] >> text=ניקיון סלון'), 'and her own chores in her card ("את")')
+    await shot(noa, '13c-team')
+    await mayaCard.locator('[data-nudge]').click()
+    await noa.page.waitForSelector('text=נשלחה תזכורת למאיה')
+    check(true, 'the admin sent Maya a gentle reminder')
+    await mayaCard.locator('[data-open]:has-text("להוריד את הזבל")').click()
+    await noa.page.waitForSelector('.sheet [data-a="assign"]')
+    check(true, 'a row opens the chore, where it can be handed to someone else')
+    await noa.page.click('.sheet-x')
+    await maya.page.goto(`${APP}#/y/${await noa.page.evaluate(() => location.hash.split('/')[2])}`)
+    await maya.page.waitForSelector('.turn-card')
+    check(!(await maya.page.isVisible('text=מי עושה מה')), 'members don’t get the admin view')
+    await noa.page.goBack()
+
     // 8. Home with two yards; my duckling screen.
     await noa.page.goto(APP)
     await noa.page.waitForSelector('.yard-card')

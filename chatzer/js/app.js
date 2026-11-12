@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, CLOTH_COLORS, MOODS, SLOTS, lookOf, legacyAccessory } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.6.0'
+export const APP_VERSION = '0.7.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -185,6 +185,7 @@ function parse() {
   let m
   if ((m = /^\/join\/(.+)$/.exec(h))) return { name: 'join', id: m[1] }
   if ((m = /^\/y\/([\w-]+)\/chat$/.exec(h))) return { name: 'chat', id: m[1] }
+  if ((m = /^\/y\/([\w-]+)\/team$/.exec(h))) return { name: 'team', id: m[1] }
   if ((m = /^\/y\/([\w-]+)$/.exec(h))) return { name: 'yard', id: m[1] }
   if (h === '/me') return { name: 'me' }
   if (h === '/today') return { name: 'today' }
@@ -209,6 +210,7 @@ async function render(soft = false) {
   if (view.name === 'join') await joinScreen(view.id)
   else if (view.name === 'yard') await yardScreen(view.id)
   else if (view.name === 'chat') await chatScreen(view.id)
+  else if (view.name === 'team') await teamScreen(view.id)
   else if (view.name === 'me') meScreen()
   else if (view.name === 'today') await todayScreen()
   else await homeScreen()
@@ -220,7 +222,7 @@ async function render(soft = false) {
 
 function schedulePoll() {
   clearTimeout(pollTimer)
-  const ms = view.name === 'yard' || view.name === 'chat' ? 12e3 : 45e3
+  const ms = ['yard', 'chat', 'team'].includes(view.name) ? 12e3 : 45e3
   pollTimer = setTimeout(async () => {
     if (document.visibilityState === 'visible' && navigator.onLine && identity.load()?.keys) {
       try {
@@ -847,6 +849,7 @@ async function yardScreen(id) {
     ${body}
     ${polls}
     <div class="actions-bar">
+      ${isAdmin ? `<a class="chip-btn" href="#/y/${id}/team">👥 מי עושה מה</a>` : ''}
       <button class="chip-btn" id="invite" type="button">🐥 הזמנה</button>
       <button class="chip-btn" id="poll" type="button">📊 הצבעה</button>
       <a class="chip-btn" href="#/y/${id}/chat">💬 צ׳אט${unreadChat ? ` <span class="badge">${unreadChat}</span>` : ''}</a>
@@ -1509,6 +1512,7 @@ async function yardMenu(id) {
   openSheet(`<h2>${esc(st.meta.emoji)} ${esc(st.meta.name)}</h2>
     <div class="stack">
       <button class="btn btn-soft" data-a="invite">🐥 הברווזונים וההזמנה</button>
+      ${isAdmin ? '<button class="btn btn-ghost" data-a="team">👥 מי עושה מה (לו״ז של כולם)</button>' : ''}
       ${isAdmin ? '<button class="btn btn-ghost" data-a="edit">✏️ עריכת פרטי החצר</button>' : ''}
       ${pushOn ? `<button class="btn btn-ghost" data-a="mute">${rec.muted ? '🔔 להחזיר התראות מהחצר' : '🔕 להשתיק את החצר'}</button>` : ''}
       <button class="btn btn-danger" data-a="leave">🚪 לעזוב את החצר</button>
@@ -1517,6 +1521,7 @@ async function yardMenu(id) {
     root.querySelectorAll('[data-a]').forEach((b) => (b.onclick = async () => {
       const a = b.dataset.a
       if (a === 'invite') return inviteSheet(id)
+      if (a === 'team') return go(`#/y/${id}/team`)
       if (a === 'edit') return editYardSheet(id)
       if (a === 'mute') {
         await act(() => Y.setMute(id, !rec.muted))
@@ -1681,12 +1686,17 @@ function maybeAskPush() {
 // ---------- My day ----------
 
 /** What is waiting for me, across all yards: my chores (and when), tasks with a date, events this week. */
-async function agenda(now = Date.now()) {
-  const myId = me()
+/**
+ * What is waiting for someone (me by default), across all yards or in `recs` only. `undated`: also tasks and items
+ * they took that have no date (for the admin's view).
+ */
+async function agenda(now = Date.now(), { member = me(), recs = null, undated = false } = {}) {
+  const myId = member
   const today = dayStart(now)
   const week = today + 7 * 86400e3
   const out = []
-  for (const rec of await Y.localYards()) {
+  const nodate = []
+  for (const rec of recs || (await Y.localYards())) {
     const st = Y.stateOf(rec)
     const roles = Y.rolesOf(rec)
     const yard = { id: rec.id, name: st.meta.name, emoji: st.meta.emoji }
@@ -1696,19 +1706,22 @@ async function agenda(now = Date.now()) {
       const day = late ? today : dayStart(Y.dueAt(c))
       if (day >= week) continue
       const at = c.time ? new Date(day).setHours(...c.time.split(':').map(Number), 0, 0) : day
-      out.push({ at, allDay: !c.time, late, emoji: c.emoji, name: c.name, yard, note: late ? 'באיחור' : '' })
+      out.push({ at, allDay: !c.time, late, emoji: c.emoji, name: c.name, yard, note: late ? 'באיחור' : '', ref: { chore: c.id } })
     }
     for (const it of st.items.values()) {
+      if (undated && !it.done && !it.due && it.claimedBy === myId) nodate.push({ emoji: st.meta.kind === 'event' ? '🧺' : '📌', name: it.name, yard, note: st.meta.kind === 'event' ? 'להביא' : '', ref: { item: it.id } })
       if (it.done || !it.due || (it.claimedBy && it.claimedBy !== myId)) continue
+      if (undated && !it.claimedBy) continue // the admin's view lists those once, under "בלי אף אחד"
       const at = Date.parse(it.due)
       if (at >= week) continue
-      out.push({ at, allDay: false, late: at < now, emoji: '📌', name: it.name, yard, note: it.claimedBy ? '' : 'עוד אף אחד לא לקח' })
+      out.push({ at, allDay: false, late: at < now, emoji: '📌', name: it.name, yard, note: it.claimedBy ? '' : 'עוד אף אחד לא לקח', ref: { item: it.id } })
     }
     if (st.meta.kind === 'event' && st.meta.when) {
       const at = Date.parse(st.meta.when)
       if (at >= today && at < week) {
         const mine = [...st.items.values()].filter((i) => i.claimedBy === myId).map((i) => i.name)
-        out.push({ at, allDay: false, late: false, emoji: st.meta.emoji, name: st.meta.name, yard, note: mine.length ? `${g('את מביאה', 'אתה מביא')}: ${mine.join(', ')}` : '' })
+        const bring = myId === me() ? g('את מביאה', 'אתה מביא') : who(st, rec, myId).g('מביאה', 'מביא')
+        out.push({ at, allDay: false, late: false, emoji: st.meta.emoji, name: st.meta.name, yard, note: mine.length ? `${bring}: ${mine.join(', ')}` : '' })
       }
     }
   }
@@ -1719,6 +1732,7 @@ async function agenda(now = Date.now()) {
     today: out.filter((x) => !x.late && x.at >= today && x.at < tomorrow),
     tomorrow: out.filter((x) => !x.late && x.at >= tomorrow && x.at < tomorrow + 86400e3),
     later: out.filter((x) => !x.late && x.at >= tomorrow + 86400e3),
+    nodate,
   }
 }
 
@@ -1740,6 +1754,71 @@ async function todayScreen() {
     ${section('בהמשך השבוע', a.later, { showDay: true })}
     <p class="small muted" style="margin-top:20px">${push.status() === 'on' ? 'תזכורות נשלחות בשעה שנקבעה.' : 'רוצה תזכורת בשעה שנקבעה? מפעילים התראות במסך "הברווזון שלי".'}</p>
   </main>`
+}
+
+// ---------- Who does what (for whoever runs the yard) ----------
+
+/** Things done in the last 7 days by a member (chores and tasks). */
+function doneThisWeek(st, member, now = Date.now()) {
+  const since = now - 7 * 86400e3
+  let n = 0
+  for (const c of st.chores.values()) for (const h of c.history) if (h.kind === 'done' && h.by === member && Date.parse(h.at) >= since) n++
+  for (const it of st.items.values()) if (it.done && it.doneBy === member && Date.parse(it.doneAt) >= since) n++
+  return n
+}
+
+async function teamScreen(id) {
+  const rec = await Y.localYard(id)
+  if (!rec) return go(`#/y/${id}`)
+  const st = Y.stateOf(rec)
+  const roles = Y.rolesOf(rec)
+  if (roles.get(me()) !== 'admin') return go(`#/y/${id}`)
+  const event = st.meta.kind === 'event'
+  const members = (rec.members || []).map((m) => m.id)
+  const free = [...st.items.values()].filter((i) => !i.done && !i.claimedBy)
+  const cards = []
+  for (const m of members) {
+    const a = await agenda(Date.now(), { member: m, recs: [rec], undated: true })
+    const open = a.late.length + a.today.length + a.tomorrow.length + a.later.length + a.nodate.length
+    cards.push({ m, a, open, done: doneThisWeek(st, m) })
+  }
+  cards.sort((x, y) => y.open - x.open)
+  const line = (x, { showDay = false, noTime = false } = {}) => `<li><button class="row" type="button" data-open='${esc(JSON.stringify(x.ref || {}))}' style="width:100%;text-align:start;font:inherit;color:inherit;border:0">
+    ${noTime ? '' : `<span class="when-col">${x.allDay ? '<span class="small muted">כל היום</span>' : `<b>${hhmm(x.at)}</b>`}${showDay ? `<span class="small muted">${new Intl.DateTimeFormat('he-IL', { weekday: 'short' }).format(new Date(x.at))}</span>` : ''}</span>`}
+    <span class="emo" aria-hidden="true">${esc(x.emoji)}</span>
+    <span class="what" style="padding:0"><span class="t">${esc(x.name)}</span>${x.note ? `<span class="s${x.late ? ' warn' : ''}">${esc(x.note)}</span>` : ''}</span></button></li>`
+  const part = (title, list, opts) => (list.length ? `<span class="lbl" style="margin-top:10px">${title}</span><ul class="list" style="margin-top:4px">${list.map((x) => line(x, opts)).join('')}</ul>` : '')
+  const card = ({ m, a, open, done }) => {
+    const w = who(st, rec, m)
+    return `<section class="poll team-card" aria-label="${esc(w.name)}">
+      <div style="display:flex;align-items:center;gap:10px">${duck(w.look, 52, { crown: w.admin })}
+        <div style="flex:1;min-width:0"><div class="q" style="margin:0">${esc(w.name)}</div>
+          <span class="small muted">${open ? count(open, 'דבר אחד פתוח', 'דברים פתוחים') : 'אין כלום פתוח'} · ${done ? count(done, 'בוצע אחד השבוע', 'בוצעו השבוע') : 'עוד כלום השבוע'}</span></div>
+        ${m !== me() && open ? `<button class="pill soft" type="button" data-nudge="${m}" data-n="${open}">👋 תזכורת</button>` : ''}</div>
+      ${part('באיחור', a.late)}${part('היום', a.today)}${part('מחר', a.tomorrow)}${part('השבוע', a.later, { showDay: true })}${part(event ? 'מביא/ה' : 'בלי תאריך', a.nodate, { noTime: true })}
+    </section>`
+  }
+  $app.innerHTML = `<main class="screen">
+    <header class="top"><a class="icon-btn" href="#/y/${id}" aria-label="חזרה לחצר">${ICON.back}</a><h1>מי עושה מה<span class="sub">${esc(st.meta.emoji)} ${esc(st.meta.name)} · רק ${g('את רואה', 'אתה רואה')} את זה</span></h1></header>
+    ${free.length ? `<section class="poll" aria-label="בלי אף אחד" style="background:var(--highlight-soft)"><div class="q">👀 בלי אף אחד (${free.length})</div>
+      <ul class="list" style="margin-top:4px">${free.map((it) => `<li class="row"><span class="what" style="padding:0"><span class="t">${esc(it.name)}</span>${it.due ? `<span class="s">⏰ ${esc(whenShort(Date.parse(it.due)))}</span>` : ''}</span><button class="pill" type="button" data-give="${it.id}">לשייך</button></li>`).join('')}</ul></section>` : ''}
+    ${cards.map(card).join('')}
+  </main>`
+  $app.querySelectorAll('[data-give]').forEach((b) => (b.onclick = () => assignSheet(id, { item: b.dataset.give })))
+  $app.querySelectorAll('[data-open]').forEach((b) => (b.onclick = () => {
+    const ref = JSON.parse(b.dataset.open)
+    if (ref.chore) choreSheet(id, ref.chore)
+    else if (ref.item) itemSheet(id, ref.item)
+  }))
+  $app.querySelectorAll('[data-nudge]').forEach((b) => (b.onclick = async () => {
+    const m = b.dataset.nudge
+    const n = Number(b.dataset.n)
+    const myName = identity.profile()?.nickname || ''
+    busy(b, true)
+    const ok = await act(() => Y.post(id, [{ t: 'nudge', to: m }], { body: `👋 ${myName}: ${n === 1 ? 'יש דבר אחד שמחכה לך' : `יש ${n} דברים שמחכים לך`} בחצר`, to: [m] }))
+    busy(b, false)
+    if (ok !== undefined) toast(`נשלחה תזכורת ל${who(st, rec, m).name}`)
+  }))
 }
 
 // ---------- My duckling ----------
