@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fold, openReports, plannedReminders, choreRemindAt, splitList, summaryText, eventIcs, googleCalendarUrl, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite, parseItem, takers, isFull, eveBefore, nextMorning, icsFile, gcalLink, RRULES } from '../chatzer/js/yard.js'
+import { fold, openReports, plannedReminders, choreRemindAt, splitList, summaryText, eventIcs, googleCalendarUrl, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite, parseItem, takers, isFull, eveBefore, nextMorning, icsFile, gcalLink, RRULES, goFor, GO } from '../chatzer/js/yard.js'
 
 const A = 'a'.repeat(24)
 const B = 'b'.repeat(24)
@@ -378,4 +378,24 @@ test('0.10: calendar files made on the phone: all-day with a 9:00 reminder, repe
   const link = new URL(gcalLink({ start: day, allDay: true, title: 'x', rrule: RRULES['2weeks'] }))
   assert.equal(link.searchParams.get('dates'), '20261116/20261117')
   assert.equal(link.searchParams.get('recur'), 'RRULE:FREQ=WEEKLY;INTERVAL=2')
+})
+
+test('0.11: deep links: where a notification opens; anything odd falls back to the yard', () => {
+  assert.equal(goFor('g1'), '#/y/g1')
+  assert.equal(goFor('g1', '?item=tAb-_1'), '#/y/g1?item=tAb-_1')
+  assert.equal(goFor('g1', '/chat'), '#/y/g1/chat')
+  assert.equal(goFor('g1', '#/today'), '#/today')
+  assert.equal(goFor('g1', 'https://evil.example'), '#/y/g1')
+  assert.equal(goFor('g1', '?item=<script>'), '#/y/g1')
+  assert.ok(fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '../chatzer/sw.js'), 'utf8').includes(GO.source), 'sw.js checks links with the same rule')
+  const now = new Date(2026, 10, 10, 12, 0).getTime()
+  const s = fold([
+    e(A, { t: 'yard.meta', name: 'הבית', emoji: '🏡', kind: 'home' }),
+    e(A, { t: 'chore.put', id: 'c1', name: 'כלים', emoji: '🫧', every: 'day', time: '20:00', order: [B] }),
+    e(A, { t: 'item.put', id: 't1', name: 'נייר', due: '2026-11-11T10:00' }),
+  ], roles)
+  const plan = plannedReminders(s, roles, now)
+  assert.equal(plan.find((r) => r.id === 'c_c1').go, '?chore=c1')
+  assert.equal(plan.find((r) => r.id === 't_t1').go, '?item=t1')
+  assert.equal(plan.find((r) => r.id === `d_${B}`).go, '#/today')
 })

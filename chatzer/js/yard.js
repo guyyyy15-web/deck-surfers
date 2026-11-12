@@ -453,17 +453,17 @@ export function plannedReminders(s, roles = new Map(), now = Date.now()) {
       const chores = [...s.chores.values()].filter((c) => turnOf(c, roles) === m && dueAt(c) < end).map((c) => `${c.emoji} ${c.name}${c.time ? ` ${c.time}` : ''}`)
       const tasks = [...s.items.values()].filter((i) => !i.done && i.claimedBy === m && i.due && Date.parse(i.due) < end).map((i) => `📌 ${i.name}`)
       const all = [...chores, ...tasks]
-      if (all.length) out.push({ id: `d_${m}`.slice(0, 64), to: m, at, body: `☀️ בוקר טוב! היום ברשימה: ${list(all)}` })
+      if (all.length) out.push({ id: `d_${m}`.slice(0, 64), to: m, at, body: `☀️ בוקר טוב! היום ברשימה: ${list(all)}`, go: '#/today' })
     }
   }
   for (const c of s.chores.values()) {
     const at = choreRemindAt(c, now)
-    if (at && at - now < 60 * DAY) out.push({ id: `c_${c.id}`.slice(0, 64), to: turnOf(c, roles), at, body: `⏰ תורך: ${c.emoji} ${c.name}` })
+    if (at && at - now < 60 * DAY) out.push({ id: `c_${c.id}`.slice(0, 64), to: turnOf(c, roles), at, body: `⏰ תורך: ${c.emoji} ${c.name}`, go: `?chore=${c.id}` })
   }
   for (const it of s.items.values()) {
     if (it.done || !it.due) continue
     const at = Date.parse(it.due)
-    if (at > now && at - now < 60 * DAY) out.push({ id: `t_${it.id}`.slice(0, 64), to: it.claimedBy || null, at, body: it.claimedBy ? `⏰ ${it.name}` : `⏰ ${it.name} (עוד אף אחד לא לקח)` })
+    if (at > now && at - now < 60 * DAY) out.push({ id: `t_${it.id}`.slice(0, 64), to: it.claimedBy || null, at, go: `?item=${it.id}`, body: it.claimedBy ? `⏰ ${it.name}` : `⏰ ${it.name} (עוד אף אחד לא לקח)` })
   }
   return out
 }
@@ -637,7 +637,17 @@ export async function createYard(meta, starters = []) {
 }
 
 /**
- * Adds events (queued first, so nothing is lost offline). `notify` = { body, to? } asks the server to tell
+ * Where a notification opens: `go` is a full app hash ('#/today') or a part after the yard ('?item=…', '/chat').
+ * Anything else falls back to the yard. sw.js checks it again before opening.
+ */
+export const GO = /^#\/[\w/-]*(\?[\w=&-]*)?$/
+export const goFor = (yid, go = '') => {
+  const h = !go ? `#/y/${yid}` : go.startsWith('#') ? go : `#/y/${yid}${go}`
+  return GO.test(h) ? h : `#/y/${yid}`
+}
+
+/**
+ * Adds events (queued first, so nothing is lost offline). `notify` = { body, to?, go? } asks the server to tell
  * the others (or only `to`); the text is encrypted with the yard key, so only their phones can read it.
  */
 export async function post(yid, evs, notify = null) {
@@ -646,7 +656,7 @@ export async function post(yid, evs, notify = null) {
   rec.outbox = [...(rec.outbox || []), ...evs.map((ev) => ({ ...ev, at }))]
   if (notify?.body) {
     const st = stateOf(rec)
-    rec.notify = { title: `${st.meta.emoji} ${st.meta.name}`.slice(0, 60), body: String(notify.body).slice(0, 160), to: notify.to || null }
+    rec.notify = { title: `${st.meta.emoji} ${st.meta.name}`.slice(0, 60), body: String(notify.body).slice(0, 160), go: goFor(yid, notify.go), to: notify.to || null }
   }
   await db.putYard(rec)
   try {
@@ -921,9 +931,10 @@ export async function syncReminders(yid) {
   const ops = []
   const next = {}
   for (const r of planned) {
-    const sig = `${r.to}|${r.at}|${r.body}`
+    const go = goFor(yid, r.go)
+    const sig = `${r.to}|${r.at}|${r.body}|${go}`
     next[r.id] = sig
-    if (sent[r.id] !== sig) ops.push({ id: r.id, to: r.to, at: r.at, keyVersion: rec.keyVersion, data: await encryptEvent(raw, { title, body: r.body.slice(0, 160) }) })
+    if (sent[r.id] !== sig) ops.push({ id: r.id, to: r.to, at: r.at, keyVersion: rec.keyVersion, data: await encryptEvent(raw, { title, body: r.body.slice(0, 160), go }) })
   }
   for (const id of Object.keys(sent)) if (!next[id]) ops.push({ id, delete: true })
   if (!ops.length) return

@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, CLOTH_COLORS, MOODS, SLOTS, lookOf, legacyAccessory } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.10.0'
+export const APP_VERSION = '0.11.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -188,8 +188,12 @@ let view = { name: '', id: null }
 let pollTimer = 0
 
 function parse() {
-  const h = decodeURIComponent(location.hash.slice(1)) || '/'
+  const [path, query = ''] = location.hash.slice(1).split('?')
+  const h = decodeURIComponent(path) || '/'
+  const q = new URLSearchParams(query)
+  const open = ['item', 'chore', 'poll', 'reports'].find((k) => q.has(k))
   let m
+  if (open && (m = /^\/y\/([\w-]+)$/.exec(h))) return { name: 'yard', id: m[1], open: { kind: open, ref: q.get(open) } }
   if ((m = /^\/join\/(.+)$/.exec(h))) return { name: 'join', id: m[1] }
   if ((m = /^\/y\/([\w-]+)\/chat$/.exec(h))) return { name: 'chat', id: m[1] }
   if ((m = /^\/y\/([\w-]+)\/team$/.exec(h))) return { name: 'team', id: m[1] }
@@ -215,7 +219,10 @@ async function render(soft = false) {
   const refocus = soft && typing && active.id
   if (!identity.load()?.keys && view.name !== 'join') return welcome()
   if (view.name === 'join') await joinScreen(view.id)
-  else if (view.name === 'yard') await yardScreen(view.id)
+  else if (view.name === 'yard') {
+    await yardScreen(view.id)
+    if (view.open) await openFromLink(view.id, view.open)
+  }
   else if (view.name === 'chat') await chatScreen(view.id)
   else if (view.name === 'team') await teamScreen(view.id)
   else if (view.name === 'me') meScreen()
@@ -225,6 +232,24 @@ async function render(soft = false) {
   if (same) scrollTo(0, y)
   else scrollTo(0, 0)
   schedulePoll()
+}
+
+/**
+ * A notification's deep link (#/y/<yard>?item=…): open that thing on top of its yard, once. The address goes back
+ * to the plain yard first, so "back" closes the sheet and a refresh doesn't open it again.
+ */
+async function openFromLink(id, { kind, ref }) {
+  history.replaceState(null, '', `#/y/${id}`)
+  view = { name: 'yard', id }
+  const st = Y.stateOf(await Y.localYard(id))
+  if (kind === 'item' && st.items.has(ref)) return itemSheet(id, ref)
+  if (kind === 'chore' && st.chores.has(ref)) return choreSheet(id, ref)
+  if (kind === 'reports') return reportsSheet(id)
+  if (kind === 'poll') {
+    const card = document.querySelector(`.poll[data-poll="${CSS.escape(ref || '')}"]`)
+    card?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    card?.classList.add('flash')
+  }
 }
 
 function schedulePoll() {
@@ -1074,7 +1099,7 @@ function pollCard(rec, st, p, myId, isAdmin) {
   const total = counts.reduce((a, b) => a + b, 0)
   const mine = p.votes.get(myId)
   const faces = (i) => [...p.votes].filter(([, o]) => o === i).slice(0, 4).map(([m]) => duckOf(st, rec, m, 22)).join('')
-  return `<section class="poll" aria-label="הצבעה">
+  return `<section class="poll" aria-label="הצבעה" data-poll="${esc(p.id)}">
     <div class="q">📊 ${esc(p.q)}${p.closed ? ' <span class="small muted">(נסגרה)</span>' : ''}</div>
     ${p.options.map((o, i) => `<button type="button" class="opt" data-vote="${p.id}" data-opt="${i}" aria-pressed="${mine === i}" ${p.closed ? 'disabled' : ''}>
       <span class="fill" style="width:${total ? Math.round((counts[i] / total) * 100) : 0}%"></span>
@@ -1155,7 +1180,7 @@ function bindYard(rec, st, roles, myId) {
     const p = identity.profile()
     input.value = ''
     await act(async () => {
-      await Y.post(id, [{ t: 'item.put', id: itemId, name, ...(qty ? { qty } : {}) }], st.meta.kind === 'event' ? { body: `${p.nickname}: הוספתי לרשימה ${name}` } : { body: `${p.nickname}: משימה חדשה, ${name}` })
+      await Y.post(id, [{ t: 'item.put', id: itemId, name, ...(qty ? { qty } : {}) }], st.meta.kind === 'event' ? { body: `${p.nickname}: הוספתי לרשימה ${name}`, go: `?item=${itemId}` } : { body: `${p.nickname}: משימה חדשה, ${name}`, go: `?item=${itemId}` })
       await render(true)
       $app.querySelector('#addin')?.focus()
       toast(`נוסף: ${name}`, { label: st.meta.kind === 'event' ? g('ואני מביאה', 'ואני מביא') : 'ואני על זה', run: () => claim(id, itemId, true) })
@@ -1221,7 +1246,7 @@ async function passTurn(id, choreId) {
   const c = st.chores.get(choreId)
   if (!c) return
   const next = Y.nextInOrder(Y.orderOf(c, roles), Y.turnOf(c, roles), roles)
-  await act(() => Y.post(id, [{ t: 'chore.pass', id: choreId }], { body: `תורך! ${c.emoji} ${c.name} (העברה מ${identity.profile().nickname})`, to: [next] }))
+  await act(() => Y.post(id, [{ t: 'chore.pass', id: choreId }], { body: `תורך! ${c.emoji} ${c.name} (העברה מ${identity.profile().nickname})`, to: [next], go: `?chore=${choreId}` }))
   toast(`העברת ל${who(st, rec, next).name}`, { label: 'בטל', run: () => act(async () => {
     await Y.post(id, [{ t: 'chore.undo', id: choreId }])
     await render(true)
@@ -1354,7 +1379,7 @@ async function report(id, what) {
   const reason = prompt('מה לא בסדר? (לא חובה)') ?? null
   if (reason === null) return false
   const rec = await Y.localYard(id)
-  const ok = await act(() => Y.post(id, [{ t: 'report.put', rid: Y.newId('r'), ...what, reason: reason.trim().slice(0, 200) }], { body: '🚩 יש דיווח חדש בחצר', to: adminsOf(rec).filter((m) => m !== me()) }))
+  const ok = await act(() => Y.post(id, [{ t: 'report.put', rid: Y.newId('r'), ...what, reason: reason.trim().slice(0, 200) }], { body: '🚩 יש דיווח חדש בחצר', go: '?reports=1', to: adminsOf(rec).filter((m) => m !== me()) }))
   if (ok !== undefined) toast('הדיווח נשלח לאמא ברווזה. תודה 💛')
   return true
 }
@@ -1445,7 +1470,7 @@ async function assignSheet(id, what) {
       const to = b.dataset.to || null
       const ev = what.chore ? { t: 'chore.assign', id: what.chore, to } : { t: 'item.assign', id: what.item, to }
       const body = what.chore ? `תורך! ${thing.emoji} ${thing.name} (מ${myName})` : `📌 ${thing.name}: זה אצלך (מ${myName})`
-      await act(() => Y.post(id, [ev], to && to !== me() ? { body, to: [to] } : null))
+      await act(() => Y.post(id, [ev], to && to !== me() ? { body, to: [to], go: what.chore ? `?chore=${what.chore}` : `?item=${what.item}` } : null))
       toast(to ? `עבר ל${who(st, rec, to).name}` : 'שוחרר')
       await closeSheet()
       await render(true)
@@ -1521,7 +1546,7 @@ async function newChoreSheet(id, editId = null) {
       if (name.length < 2) return (f.querySelector('#err').textContent = 'מה המטלה? (לפחות 2 תווים)')
       if (!everyone && !picked.length) return (f.querySelector('#err').textContent = 'בחרו מי בסבב')
       const ev = { t: 'chore.put', id: editId || Y.newId('c'), name, emoji: f.querySelector('[data-emo][aria-pressed="true"]').dataset.emo, every: f.querySelector('[data-every][aria-pressed="true"]').dataset.every, everyone, order: everyone ? [] : picked, time: f.querySelector('#ctime').value || null }
-      await act(() => Y.post(id, [ev], editId ? null : { body: `מטלה חדשה בסבב: ${ev.emoji} ${name}` }))
+      await act(() => Y.post(id, [ev], editId ? null : { body: `מטלה חדשה בסבב: ${ev.emoji} ${name}`, go: `?chore=${ev.id}` }))
       await closeSheet()
       await render(true)
     }
@@ -1559,7 +1584,7 @@ async function doneSheet(id, target) {
         if (target.chore) {
           const c = s.chores.get(target.chore)
           const next = Y.nextInOrder(Y.orderOf(c, roles), Y.turnOf(c, roles), roles)
-          const notify = next && next !== me() ? { body: `תורך! ${c.emoji} ${c.name}`, to: [next] } : null
+          const notify = next && next !== me() ? { body: `תורך! ${c.emoji} ${c.name}`, to: [next], go: `?chore=${target.chore}` } : null
           await Y.post(id, [{ t: 'chore.done', id: target.chore, ...(photoId ? { photoId } : {}) }], notify)
         } else await Y.post(id, [{ t: 'item.done', id: target.item, on: true, ...(photoId ? { photoId } : {}) }])
         return true
@@ -1608,7 +1633,8 @@ function pollSheet(id) {
       const options = [...opts.querySelectorAll('input')].map((i) => i.value.trim()).filter(Boolean)
       if (!q) return (f.querySelector('#err').textContent = 'מה שואלים?')
       if (options.length < 2) return (f.querySelector('#err').textContent = 'צריך לפחות 2 תשובות')
-      await act(() => Y.post(id, [{ t: 'poll.put', id: Y.newId('p'), q, options }], { body: `הצבעה חדשה: ${q}` }))
+      const pid = Y.newId('p')
+      await act(() => Y.post(id, [{ t: 'poll.put', id: pid, q, options }], { body: `הצבעה חדשה: ${q}`, go: `?poll=${pid}` }))
       await closeSheet()
       await render(true)
     }
@@ -1641,7 +1667,7 @@ async function chatScreen(id) {
     const text = ta.value.trim()
     if (!text) return
     ta.value = ''
-    await act(() => Y.post(id, [{ t: 'comment.put', cid: Y.newId('m'), id: Y.CHAT, text }], { body: `${identity.profile().nickname}: ${text}`.slice(0, 160) }))
+    await act(() => Y.post(id, [{ t: 'comment.put', cid: Y.newId('m'), id: Y.CHAT, text }], { body: `${identity.profile().nickname}: ${text}`.slice(0, 160), go: '/chat' }))
     await render(true)
     $app.querySelector('#msg')?.focus()
     scrollTo(0, document.body.scrollHeight)
@@ -2236,7 +2262,7 @@ async function teamScreen(id) {
     const n = Number(b.dataset.n)
     const myName = identity.profile()?.nickname || ''
     busy(b, true)
-    const ok = await act(() => Y.post(id, [{ t: 'nudge', to: m }], { body: `👋 ${myName}: ${n === 1 ? 'יש דבר אחד שמחכה לך' : `יש ${n} דברים שמחכים לך`} בחצר`, to: [m] }))
+    const ok = await act(() => Y.post(id, [{ t: 'nudge', to: m }], { go: '#/today', body: `👋 ${myName}: ${n === 1 ? 'יש דבר אחד שמחכה לך' : `יש ${n} דברים שמחכים לך`} בחצר`, to: [m] }))
     busy(b, false)
     if (ok !== undefined) toast(`נשלחה תזכורת ל${who(st, rec, m).name}`)
   }))

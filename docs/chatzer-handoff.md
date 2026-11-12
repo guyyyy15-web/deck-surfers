@@ -5,7 +5,7 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
 
 ## Where things stand (2026-11-12)
 
-- **Live:** 0.10.0 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
+- **Live:** 0.11.0 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
   Worker `chatzer-sync` serves the API (same `server/` code as `nekamot-sync`, `--env chatzer`).
 - **Users:** first real day, 14 ducklings, 7 yards, 11 active in 24h. Run `bash scripts/chatzer-stats.sh` for now.
 - **Product docs (Claude artifacts, Guy's account):**
@@ -30,6 +30,10 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
   "Add to calendar", made on the phone (`icsFile`, `gcalLink` in yard.js): the event with what I bring, a task
   with a date, my chore turn (a repeating event when I'm alone in the rotation), and "הכל ליומן" for my week.
   Calendar entries don't update by themselves (the sheet says so).
+- 0.11 deep links: every notification carries `go` inside the encrypted note (`goFor()` in yard.js; sw.js checks
+  it with the same `GO` rule, a test keeps them equal). Routes: `#/y/<id>?item=…|chore=…|poll=…|reports=1`
+  (`openFromLink()` opens the sheet, then the address goes back to `#/y/<id>`), `#/y/<id>/chat`, `#/today`
+  (morning summary, the admin's nudge). New notifications: pass `go` to `Y.post(..., { body, to, go })`.
 
 ## How Guy works
 

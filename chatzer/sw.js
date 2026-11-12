@@ -1,6 +1,6 @@
 // Offline: every file the app needs is cached on install. Bump VERSION (and APP_VERSION in js/app.js) on
 // every change; tests/chatzer.test.mjs checks that every file is listed here.
-const VERSION = 'chatzer-v0.10.0'
+const VERSION = 'chatzer-v0.11.0'
 const CACHE = `chatzer:${VERSION}`
 // The shell is cached as './' only: Cloudflare Pages answers /index.html with a redirect to /, and a page can't be
 // opened from a redirected response (the installed app would fail to start).
@@ -96,6 +96,7 @@ self.addEventListener('push', (e) => {
       msg = e.data ? e.data.json() : {}
     } catch { /* not JSON */ }
     let title = 'החצר'
+    let hash = msg.g && /^[\w-]+$/.test(msg.g) ? `#/y/${msg.g}` : '#/'
     let body = msg.test ? 'ההתראות עובדות! 🐥' : 'יש חדש בחצר 🐥'
     if (msg.g && msg.d) {
       try {
@@ -103,13 +104,15 @@ self.addEventListener('push', (e) => {
         if (note) {
           title = String(note.title || title).slice(0, 60)
           body = String(note.body || body).slice(0, 160)
+          // Deep link: only an app route, never a URL (the note comes from a yard member).
+          if (typeof note.go === 'string' && /^#\/[\w/-]*(\?[\w=&-]*)?$/.test(note.go)) hash = note.go
         }
       } catch { /* generic text */ }
     }
     if (self.navigator.setAppBadge) self.navigator.setAppBadge().catch(() => undefined)
     await self.registration.showNotification(title, {
       body, tag: msg.g || 'chatzer', renotify: true, lang: 'he', dir: 'rtl',
-      icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { hash: msg.g ? `#/y/${msg.g}` : '#/' },
+      icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { hash },
     })
   })())
 })

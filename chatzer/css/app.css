@@ -299,6 +299,8 @@ textarea.input { padding: 12px 16px; min-height: 96px; resize: vertical; }
 .tip.bell { border-style: solid; background: var(--highlight-soft); color: var(--ink); }
 /* While a sheet is open, a toast (e.g. "בטל") moves to the top so it never covers the sheet's buttons. */
 body:has(.sheet-wrap) .toast { bottom: auto; top: calc(var(--safe-top) + 14px); }
+.poll.flash { animation: flash 1.6s ease-out 2; }
+@keyframes flash { 30% { box-shadow: 0 0 0 4px var(--yellow); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
 /* My day: the time column */

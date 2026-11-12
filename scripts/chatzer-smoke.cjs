@@ -274,8 +274,33 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     await maya.page.waitForSelector('.opt[aria-pressed="true"]:has-text("14:00")')
     check(true, 'Maya voted in Noa’s poll')
     await maya.page.click('a:has-text("צ׳אט")')
+    const notes = []
+    const onReq = (r) => {
+      if (r.method() === 'POST' && /\/events$/.test(r.url())) try { const n = JSON.parse(r.postData()).notify; if (n) notes.push(n) } catch { /* not JSON */ }
+    }
+    maya.page.on('request', onReq)
     await maya.page.fill('#msg', 'מישהו מביא מחצלות?')
     await maya.page.click('#f button[type="submit"]')
+    await maya.page.waitForSelector('.bubble:has-text("מחצלות")')
+    maya.page.off('request', onReq)
+    // Deep links: the notification (encrypted with the yard key) says where it opens; the server never sees it.
+    const evYard = await maya.page.evaluate(() => location.hash.split('/')[2])
+    const note = await maya.page.evaluate(async ({ yid, n }) => {
+      const Y = await import('./js/yard.js')
+      const rec = await Y.localYard(yid)
+      return Y.decryptEvent(Uint8Array.from(atob(rec.keys[n.keyVersion]), (c) => c.charCodeAt(0)), n.data)
+    }, { yid: evYard, n: notes.at(-1) })
+    check(note.go === `#/y/${evYard}/chat` && /מחצלות/.test(note.body), 'a chat notification opens the chat (the link is inside the encrypted note)')
+    const pitasId = await maya.page.evaluate(async (yid) => {
+      const Y = await import('./js/yard.js')
+      return [...Y.stateOf(await Y.localYard(yid)).items.values()].find((i) => i.name === 'פיתות').id
+    }, evYard)
+    await maya.page.goto(`${APP}#/y/${evYard}?item=${pitasId}`)
+    await maya.page.waitForSelector('.sheet h2:has-text("פיתות")')
+    check((await maya.page.evaluate(() => location.hash)) === `#/y/${evYard}`, 'opening "#/y/…?item=…" shows the yard with that item open (and the address goes back to the yard)')
+    await maya.page.click('.sheet-x')
+    await maya.page.waitForSelector('.sheet', { state: 'detached' })
+    await maya.page.goto(`${APP}#/y/${evYard}/chat`)
     await maya.page.waitForSelector('.bubble:has-text("מחצלות")')
     await noa.page.goto(`${APP}#/y/${link ? (await noa.page.evaluate(() => location.hash.split('/')[2])) : ''}/chat`)
     await noa.page.waitForSelector('.bubble:has-text("מחצלות")', { timeout: 15000 })
