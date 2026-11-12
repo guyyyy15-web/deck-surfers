@@ -1,6 +1,6 @@
 // Offline: every file the app needs is cached on install. Bump VERSION whenever a file changes
 // (tests/files.test.mjs checks that every app file is listed here).
-const VERSION = 'nekamot-v1.5.2'
+const VERSION = 'nekamot-v1.6.0'
 // Every app on guyyyy15-web.github.io shares one origin, so cache names carry this app's path.
 const SCOPE = new URL(self.registration.scope).pathname
 const CACHE = `nekamot:${SCOPE}:${VERSION}`
@@ -108,6 +108,7 @@ self.addEventListener('push', (e) => {
       } catch { /* generic text */ }
     }
     if (self.navigator.setAppBadge) self.navigator.setAppBadge().catch(() => undefined)
+    for (const w of await self.clients.matchAll({ type: 'window' })) w.postMessage({ news: true })
     await self.registration.showNotification(title, {
       body,
       tag: msg.g || 'nekamot',

@@ -32,15 +32,25 @@ export function unreadTotal() {
 }
 
 /** Background refresh while a group screen is open (and once on app start / return). */
+// Quick while things happen (12 s in a group, 45 s on the list), slower while nothing changes (up to 2 minutes).
+// Anything you do, a notification, or coming back to the app makes it quick again.
+let idle = 0
+export function pollSoon() {
+  idle = 0
+}
+for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, pollSoon, { passive: true })
+
 export async function poll(gid, force = false) {
   if (!hasCat() || polling) return
   const now = Date.now()
-  if (!force && now - lastPoll < (gid ? 12e3 : 45e3)) return
+  if (!force && now - lastPoll < Math.min(120e3, (gid ? 12e3 : 45e3) * 1.6 ** idle)) return
   lastPoll = now
+  if (force) idle = 0
   polling = (async () => {
     let added = 0
     try {
       added = gid ? await G.refresh(gid) : await G.refreshAll()
+      idle = added ? 0 : idle + 1
     } catch (e) {
       if (e.code === 'removed') {
         await reload()

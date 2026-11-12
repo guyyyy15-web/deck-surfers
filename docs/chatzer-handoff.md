@@ -5,7 +5,7 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
 
 ## Where things stand (2026-11-12)
 
-- **Live:** 0.12.0 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
+- **Live:** 0.13.0 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
   Worker `chatzer-sync` serves the API (same `server/` code as `nekamot-sync`, `--env chatzer`).
 - **Users:** first real day, 14 ducklings, 7 yards, 11 active in 24h. Run `bash scripts/chatzer-stats.sh` for now.
 - **Product docs (Claude artifacts, Guy's account):**
@@ -40,6 +40,11 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
   badge is the total. In a yard: chat count, "עוד לא הצבעת" on polls, "חדש" on new items. The chat has its own
   seen pointer (`rec.chatSeq`, set when the chat opens). Opening a yard, or a yard with nothing waiting, closes
   its notifications still on the lock screen (`push.closeShown`).
+- 0.13 lighter sync (same in נקמות שלי 1.6.0, js/groups.js): a check is one request (`/events?since=`), whose
+  answer carries `mv` (members version: count, last join, last removal, admins); the full group info is reloaded
+  only when `mv`/keys change or every 10 min. Home skips yards whose `seq` didn't move. Polling backs off from
+  12 s / 45 s to 2 min while nothing changes; taps, a notification (sw.js posts `news`) or returning resets it.
+  `stateOf()` is cached per yard (treat it as read-only). Measured idle phone: ~600 → ~40 requests/hour.
 
 ## How Guy works
 

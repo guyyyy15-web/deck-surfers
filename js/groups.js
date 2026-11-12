@@ -205,8 +205,15 @@ export async function localGroups() {
 }
 export const localGroup = (id) => db.getGroup(id).catch(() => null)
 
+/** The group folded from its log; kept until the log or the members change. Treat it as read-only. */
+const folded = new Map()
 export function stateOf(rec) {
-  return fold(rec.events, new Map((rec.members || []).map((m) => [m.id, m.role])))
+  const key = `${rec.events.length}|${rec.events.at(-1)?.seq || 0}|${(rec.members || []).map((m) => m.id + m.role).join()}`
+  const hit = folded.get(rec.id)
+  if (hit && hit.key === key) return hit.state
+  const state = fold(rec.events, new Map((rec.members || []).map((m) => [m.id, m.role])))
+  folded.set(rec.id, { key, state })
+  return state
 }
 
 export async function createGroup({ name, emoji }) {
@@ -265,9 +272,34 @@ async function flush(gid) {
 }
 
 /** Members, keys (unwrapped), key rotation if needed, then new events. Returns the number of new events. */
-export async function refresh(gid) {
+const INFO_MAX_AGE = 10 * 60e3
+
+/**
+ * Brings one group up to date. Usually one request: the new events (the answer also says whether the members or
+ * keys changed). The full group info is reloaded only when those changed, every 10 minutes, or with `full`.
+ */
+export async function refresh(gid, { full = false } = {}) {
   await register()
-  const { keys, profile } = me()
+  const known = await db.getGroup(gid)
+  let got = 0
+  if (!full && known && !known.removed && known.keys?.[known.keyVersion] && known.mv && Date.now() - (known.infoAt || 0) < INFO_MAX_AGE) {
+    try {
+      await flush(gid).catch(() => undefined)
+      const { added, meta } = await pull(gid)
+      got = added
+      if (meta && meta.mv === known.mv && meta.keyVersion === known.keyVersion && !meta.needsRotation) {
+        await introduce(gid)
+        return added
+      }
+    } catch (e) {
+      if (e.status !== 403 && e.status !== 404) throw e
+    }
+  }
+  return got + (await fullRefresh(gid))
+}
+
+async function fullRefresh(gid) {
+  const { keys } = me()
   let info
   try {
     info = await api('GET', `/v2/groups/${gid}`)
@@ -285,29 +317,44 @@ export async function refresh(gid) {
   rec.members = info.members
   for (const k of info.keys) if (!rec.keys[k.version]) rec.keys[k.version] = b64(await unwrap(keys, k.wrapped))
   rec.keyVersion = info.keyVersion
+  rec.mv = info.mv || null
+  rec.infoAt = Date.now()
   await db.putGroup(rec)
 
   if (info.needsRotation) await rotate(gid).catch(() => undefined)
   await flush(gid).catch(() => undefined)
 
-  const added = await pull(gid)
-
-  // Make sure the others know who I am (once, and again after I edit my cat).
-  const st = stateOf(await db.getGroup(gid))
-  const mine = st.profiles.get(keys.memberId)
-  if (profile && (!mine || mine.nickname !== profile.nickname || mine.color !== profile.color || mine.accessory !== profile.accessory)) {
-    // The first introduction also tells the others someone joined.
-    await post(gid, [{ t: 'member.profile', ...pick(profile) }], mine ? null : { body: `🐾 ${profile.nickname} הצטרף/ה לקבוצה` })
-  }
+  const { added } = await pull(gid)
+  await introduce(gid)
   return added
+}
+
+/** Does this group already know my cat as it is now? */
+function profileKnown(rec) {
+  const { keys, profile } = me()
+  if (!profile) return true
+  const mine = stateOf(rec).profiles.get(keys.memberId)
+  return !!mine && mine.nickname === profile.nickname && mine.color === profile.color && mine.accessory === profile.accessory
+}
+
+/** Make sure the others know who I am (once, and again after I edit my cat). */
+async function introduce(gid) {
+  const { keys, profile } = me()
+  const rec = await db.getGroup(gid)
+  if (!profile || profileKnown(rec)) return
+  const mine = stateOf(rec).profiles.get(keys.memberId)
+  // The first introduction also tells the others someone joined.
+  await post(gid, [{ t: 'member.profile', ...pick(profile) }], mine ? null : { body: `🐾 ${profile.nickname} הצטרף/ה לקבוצה` })
 }
 
 /** New events since the last pull (just the event log; members and keys come from refresh()). */
 async function pull(gid) {
   let added = 0
+  let meta = null
   for (;;) {
     const cur = await db.getGroup(gid)
     const page = await api('GET', `/v2/groups/${gid}/events?since=${cur.since}`)
+    meta = { mv: page.mv, keyVersion: page.keyVersion, needsRotation: page.needsRotation }
     for (const e of page.events) {
       if (e.seq <= cur.since) continue
       const raw = rawKey(cur, e.key_version)
@@ -320,7 +367,7 @@ async function pull(gid) {
     await db.putGroup(cur)
     if (!page.more) break
   }
-  return added
+  return { added, meta }
 }
 
 /** After someone left: a new key version, wrapped for everyone still in the group. */
@@ -354,7 +401,13 @@ export async function refreshAll() {
       added++
     }
   }
-  for (const g of remote) added += await refresh(g.id).catch(() => 0)
+  // Only groups whose log moved (or whose keys or my role changed) are fetched.
+  for (const g of remote) {
+    const rec = await db.getGroup(g.id)
+    const same = rec && !rec.removed && rec.since === g.seq && rec.keyVersion === g.keyVersion && rec.role === g.role && !g.needsRotation && !rec.outbox?.length
+    if (same && Date.now() - (rec.infoAt || 0) < INFO_MAX_AGE && profileKnown(rec)) continue
+    added += await refresh(g.id).catch(() => 0)
+  }
   return added
 }
 

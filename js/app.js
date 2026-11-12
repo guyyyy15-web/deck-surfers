@@ -12,7 +12,7 @@ import * as identity from './identity.js'
 import * as GU from './groups-ui.js'
 import * as push from './push.js'
 
-export const APP_VERSION = '1.5.2'
+export const APP_VERSION = '1.6.0'
 
 const S = {
   list: [],
@@ -1666,6 +1666,8 @@ async function start() {
     // Tapping a notification while the app is open: go to that group.
     navigator.serviceWorker.addEventListener('message', (e) => {
       if (typeof e.data?.nav === 'string' && e.data.nav.startsWith('#/')) location.hash = e.data.nav
+      // A notification arrived while the app is open: fetch the groups now instead of waiting for the next check.
+      if (e.data?.news) GU.poll(route().gid || null, true)
     })
     // A new version took over (existing users): offer a refresh instead of waiting for the next launch.
     navigator.serviceWorker.addEventListener('controllerchange', () => {

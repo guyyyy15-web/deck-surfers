@@ -511,12 +511,15 @@ async function deleteGroup(env, gid) {
 }
 
 /**
- * Changes whenever someone joins, leaves or is removed. Phones reload the member list (and keys) only when it
+ * Changes whenever someone joins, leaves, is removed or becomes an admin. Phones reload the member list (and keys) only when it
  * changes, instead of on every check.
  */
 async function membersVersion(env, gid) {
-  const r = await env.DB.prepare('SELECT COUNT(*) AS n, MAX(joined_at) AS j, MAX(COALESCE(removed_at, 0)) AS x FROM members WHERE group_id = ?').bind(gid).first()
-  return `${r?.n || 0}.${r?.j || 0}.${r?.x || 0}`
+  const r = await env.DB.prepare(
+    `SELECT COUNT(*) AS n, MAX(joined_at) AS j, MAX(COALESCE(removed_at, 0)) AS x,
+       SUM(CASE WHEN role = 'admin' AND removed_at IS NULL THEN 1 ELSE 0 END) AS a FROM members WHERE group_id = ?`,
+  ).bind(gid).first()
+  return `${r?.n || 0}.${r?.j || 0}.${r?.x || 0}.${r?.a || 0}`
 }
 
 /** Cron: sends the reminders that are due (once each), then forgets them. Very old ones are dropped unsent. */

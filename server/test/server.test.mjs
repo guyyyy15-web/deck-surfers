@@ -238,7 +238,7 @@ test('groups: create, invite, peek, join, post and read events', async () => {
   assert.ok(info.members.every((x) => x.push === false), 'who gets notifications is known to the yard (nobody yet)')
   const page = (await a.call('GET', `/v2/groups/${g}/events?since=0`)).data
   assert.equal(page.mv, info.mv, 'the events answer carries the members version, so phones skip the full info')
-  assert.match(info.mv, /^2\.\d+\.0$/)
+  assert.match(info.mv, /^2\.\d+\.0\.1$/)
   await b.call('POST', `/v2/groups/${g}/events`, { events: [{ keyVersion: 1, data: 'B1' }, { keyVersion: 1, data: 'B2' }] })
   const evs = (await a.call('GET', `/v2/groups/${g}/events?since=1`)).data.events
   assert.deepEqual(evs.map((e) => [e.seq, e.author_id, e.data]), [[2, b.id, 'B1'], [3, b.id, 'B2']])
