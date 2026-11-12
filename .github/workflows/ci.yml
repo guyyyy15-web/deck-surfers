@@ -79,7 +79,7 @@ jobs:
       - run: node scripts/chatzer-smoke.cjs
         name: החצר (3 phones)
         timeout-minutes: 12
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: screenshots
