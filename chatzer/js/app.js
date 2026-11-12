@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, CLOTH_COLORS, MOODS, SLOTS, lookOf, legacyAccessory } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.11.0'
+export const APP_VERSION = '0.12.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -581,6 +581,23 @@ function askVoice() {
   })
 }
 
+// ---------- What waits for me ----------
+
+const ATT = {
+  chat: (n) => `💬 ${n === 1 ? 'הודעה' : `${n} הודעות`}`,
+  chore: () => '⏰ תורך',
+  task: () => '📌 משימה בשבילך',
+  poll: () => '📊 הצבעה',
+  item: () => '🆕 חדש ברשימה',
+  report: (n) => `🚩 ${n === 1 ? 'דיווח' : `${n} דיווחים`}`,
+}
+/** "💬 2 הודעות · 📊 הצבעה": one chip per kind, in the order above. */
+function attIcons(att) {
+  const by = new Map()
+  for (const x of att) by.set(x.kind, (by.get(x.kind) || 0) + x.n)
+  return Object.keys(ATT).filter((k) => by.has(k)).map((k) => `<span class="att-chip">${ATT[k](by.get(k))}</span>`).join('')
+}
+
 // ---------- Home: my yards ----------
 
 async function homeScreen() {
@@ -601,12 +618,14 @@ async function homeScreen() {
       meta = [whenText(st.meta.when), b.total ? `${b.taken} מתוך ${b.total} נלקחו` : 'הרשימה עוד ריקה'].filter(Boolean).map(esc).join(' · ')
       if (b.total) bar = `<span class="bar" aria-hidden="true"><span style="width:${Math.round((b.taken / b.total) * 100)}%"></span></span>`
     }
-    const unread = Y.unread(rec, myId)
+    const att = Y.attention(rec, st, myId, roles)
+    const waits = Y.attentionCount(att)
+    if (!waits) push.closeShown(rec.id) // nothing waits here any more: its notifications on the lock screen go too
     const last = rec.events.at(-1)?.at || ''
-    return { last, alert, html: `<a class="yard-card" href="#/y/${rec.id}">
+    return { last, waits, alert, html: `<a class="yard-card" href="#/y/${rec.id}">
       <span class="tile ${st.meta.kind}" aria-hidden="true">${esc(st.meta.emoji)}</span>
-      <span class="body"><span class="name">${esc(st.meta.name)}</span><span class="meta">${meta}</span>${bar}</span>
-      ${unread ? `<span class="badge" aria-label="${unread} חדשים">${unread > 99 ? '99+' : unread}</span>` : ''}</a>` }
+      <span class="body"><span class="name">${esc(st.meta.name)}</span><span class="meta">${meta}</span>${att.length ? `<span class="att">${attIcons(att)}</span>` : ''}${bar}</span>
+      ${waits ? `<span class="badge" aria-label="${count(waits, 'דבר אחד מחכה לך', 'דברים מחכים לך')}">${waits > 99 ? '99+' : waits}</span>` : ''}</a>` }
   }).sort((a, b) => (a.last < b.last ? 1 : -1))
   const waiting = cards.reduce((n, c) => n + c.alert, 0)
   const ag = await agenda()
@@ -615,7 +634,7 @@ async function homeScreen() {
     <div class="q" style="display:flex;align-items:center;gap:8px"><span style="flex:1">היום שלך</span><a class="link-btn" href="#/today" style="font-size:15px">כל הלו״ז</a></div>
     <ul class="list" style="margin-top:4px">${soon.slice(0, 3).map((x) => agendaRow(x)).join('')}</ul>
     ${soon.length > 3 ? `<p class="small muted" style="margin:8px 0 0">ועוד ${soon.length - 3}</p>` : ''}</section>` : ''
-  push.setBadge(recs.reduce((n, r) => n + Y.unread(r, myId), 0))
+  push.setBadge(cards.reduce((n, c) => n + c.waits, 0))
   const p = identity.profile()
   if (!p) return welcome() // the duckling went away while this screen was loading (signed out, storage cleared)
   const showSave = recs.length > 0 && !V.saved().length && !settings.hideSave
@@ -944,9 +963,12 @@ async function yardScreen(id) {
   const isAdmin = roles.get(myId) === 'admin'
   const sub = st.meta.kind === 'event' ? [whenText(st.meta.when), st.meta.where].filter(Boolean).map(esc).join(' · ') : count(rec.members?.length || 1, 'ברווזון אחד', 'ברווזונים')
   const pending = rec.outbox?.length ? `<div class="offline">${count(rec.outbox.length, 'שינוי אחד מחכה', 'שינויים מחכים')} לרשת</div>` : ''
-  const body = st.meta.kind === 'home' ? homeYardBody(rec, st, roles, myId) : eventYardBody(rec, st, myId)
-  const polls = [...st.polls.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).map((p) => pollCard(rec, st, p, myId, isAdmin)).join('')
-  const unreadChat = st.chat.filter((c) => c.author !== myId && rec.events.find((e) => e.ev?.cid === c.cid)?.seq > (rec.seenSeq || 0)).length
+  const att = Y.attention(rec, st, myId, roles)
+  const unreadChat = att.find((x) => x.kind === 'chat')?.n || 0
+  const fresh = new Set(att.filter((x) => x.kind === 'item').map((x) => x.ref))
+  const unvoted = new Set(att.filter((x) => x.kind === 'poll').map((x) => x.ref))
+  const body = st.meta.kind === 'home' ? homeYardBody(rec, st, roles, myId) : eventYardBody(rec, st, myId, fresh)
+  const polls = [...st.polls.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).map((p) => pollCard(rec, st, p, myId, isAdmin, unvoted.has(p.id))).join('')
   $app.innerHTML = `<main class="screen">
     ${navigator.onLine ? pending : offlineLine()}
     <header class="top">
@@ -967,7 +989,8 @@ async function yardScreen(id) {
     </div>
   </main>`
   bindYard(rec, st, roles, myId)
-  if (!st.chat.some((c) => c.author !== myId && rec.events.find((e) => e.ev?.cid === c.cid)?.seq > (rec.seenSeq || 0))) Y.markSeen(id)
+  Y.markSeen(id) // what's new is seen now; the chat keeps its own "seen" until it is opened
+  push.closeShown(id) // and this yard's notifications leave the lock screen
 }
 
 /** Members who took nothing yet (the admin can remind them). */
@@ -1003,7 +1026,7 @@ function celebrate(text = '') {
   setTimeout(() => el.remove(), 1300)
 }
 
-function eventYardBody(rec, st, myId) {
+function eventYardBody(rec, st, myId, fresh = new Set()) {
   const b = Y.eventBoard(st, myId)
   const isAdmin = (rec.members || []).some((m) => m.id === myId && m.role === 'admin')
   const mother = duck(who(st, rec, (rec.members || []).find((m) => m.role === 'admin')?.id).look, 44, { crown: true })
@@ -1022,10 +1045,11 @@ function eventYardBody(rec, st, myId) {
     let side = ''
     let cls = 'row'
     if (mineHere) cls += ' mine'
+    if (fresh.has(it.id)) cls += ' fresh'
     const ducks = ts.length ? `<span class="who">${ts.slice(0, 3).map((m) => duckOf(st, rec, m)).join('')}${ts.length === 1 ? esc(who(st, rec, ts[0]).name) : ''}${!mineHere && Y.isFull(it) ? ' ✓' : ''}</span>` : ''
     if (!Y.isFull(it) && !mineHere) side = `<button class="pill claim" type="button" data-claim="${it.id}">${ts.length ? 'גם אני!' : g('אני מביאה!', 'אני מביא!')}</button>`
     const sub = need > 1 ? `<span class="s">${ts.map((m) => who(st, rec, m).name).join(' + ') || 'מביאים ביחד'} · ${ts.length}/${need}</span>` : ''
-    return `<li class="${cls}"><button class="what" type="button" data-item="${it.id}"><span class="t">${esc(it.name)}${qty}</span>${sub}</button>${need > 1 || !side ? ducks : ''}${side}</li>`
+    return `<li class="${cls}"><button class="what" type="button" data-item="${it.id}"><span class="t">${fresh.has(it.id) ? '<span class="new-tag">חדש</span> ' : ''}${esc(it.name)}${qty}</span>${sub}</button>${need > 1 || !side ? ducks : ''}${side}</li>`
   }
   const mineStrip = b.mine.length ? `<div class="mine-strip"><span aria-hidden="true">🧺</span><span><b>${g('את מביאה', 'אתה מביא')}:</b> ${b.mine.map((i) => esc(i.name) + (i.qty ? ` ×${esc(i.qty)}` : '')).join(', ')}</span></div>` : ''
   return `${nudge}${mineStrip}
@@ -1094,13 +1118,13 @@ function relDay(iso) {
   return `לפני ${days} ימים`
 }
 
-function pollCard(rec, st, p, myId, isAdmin) {
+function pollCard(rec, st, p, myId, isAdmin, unvoted = false) {
   const counts = Y.pollResults(p)
   const total = counts.reduce((a, b) => a + b, 0)
   const mine = p.votes.get(myId)
   const faces = (i) => [...p.votes].filter(([, o]) => o === i).slice(0, 4).map(([m]) => duckOf(st, rec, m, 22)).join('')
   return `<section class="poll" aria-label="הצבעה" data-poll="${esc(p.id)}">
-    <div class="q">📊 ${esc(p.q)}${p.closed ? ' <span class="small muted">(נסגרה)</span>' : ''}</div>
+    <div class="q">${unvoted ? '<span class="new-tag">עוד לא הצבעת</span> ' : ''}📊 ${esc(p.q)}${p.closed ? ' <span class="small muted">(נסגרה)</span>' : ''}</div>
     ${p.options.map((o, i) => `<button type="button" class="opt" data-vote="${p.id}" data-opt="${i}" aria-pressed="${mine === i}" ${p.closed ? 'disabled' : ''}>
       <span class="fill" style="width:${total ? Math.round((counts[i] / total) * 100) : 0}%"></span>
       <span class="ot">${esc(o)}</span><span class="faces">${faces(i)}</span><span class="on">${counts[i] || ''}</span></button>`).join('')}
@@ -1661,7 +1685,8 @@ async function chatScreen(id) {
   ta.value = draft
   $app.querySelectorAll('[data-msg]').forEach((b) => (b.onclick = () => messageSheet(id, b.dataset.msg)))
   scrollTo(0, document.body.scrollHeight)
-  Y.markSeen(id)
+  Y.markSeen(id, { chat: true })
+  push.closeShown(id)
   $app.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault()
     const text = ta.value.trim()

@@ -892,10 +892,48 @@ export async function ensurePhoto(yid, id) {
 export function unread(rec, myId) {
   return rec.events.filter((e) => e.seq > (rec.seenSeq || 0) && e.author !== myId).length
 }
-export async function markSeen(yid) {
+/** Opening the yard marks what's new as seen; opening the chat (`chat: true`) marks its messages too. */
+export async function markSeen(yid, { chat = false } = {}) {
   const rec = await db.getYard(yid)
-  if (rec && rec.seenSeq !== rec.since) await db.putYard({ ...rec, seenSeq: rec.since })
+  if (!rec) return
+  const chatSeq = chat ? rec.since : rec.chatSeq ?? rec.seenSeq ?? 0
+  if (rec.seenSeq !== rec.since || rec.chatSeq !== chatSeq) await db.putYard({ ...rec, seenSeq: rec.since, chatSeq })
 }
+
+/**
+ * What in this yard is waiting for me. Each signal is computed from the yard as it is now, so it goes away by
+ * itself once it no longer holds: the chore was done or passed, the item was taken, I voted, the poll closed,
+ * the report was handled, or I opened the chat. Returns [{ kind, ref?, n }]:
+ *   chat (unread messages) · chore (my turn, due or late) · task (given to me by someone else, not done)
+ *   poll (open, not mine, I haven't voted) · item (new since I last looked, still free) · report (admin, open).
+ */
+export function attention(rec, s, me, roles = new Map(), now = Date.now()) {
+  const seen = rec.seenSeq || 0
+  const chatSeen = rec.chatSeq ?? seen
+  const first = new Map()
+  for (const e of rec.events || []) {
+    const ev = e.ev
+    if (!ev) continue
+    const k = ev.t === 'comment.put' ? `m:${ev.cid}` : ev.t === 'item.put' ? `i:${ev.id}` : ev.t === 'poll.put' ? `p:${ev.id}` : null
+    if (k && !first.has(k)) first.set(k, e.seq)
+  }
+  const out = []
+  const chat = s.chat.filter((c) => c.author !== me && (first.get(`m:${c.cid}`) || 0) > chatSeen).length
+  if (chat) out.push({ kind: 'chat', n: chat })
+  for (const c of s.chores.values()) if (turnOf(c, roles) === me && dueState(c, now) !== 'soon') out.push({ kind: 'chore', ref: c.id, n: 1 })
+  for (const it of s.items.values()) {
+    if (it.done) continue
+    if (s.meta.kind === 'home' && it.claimedBy === me && it.assignedBy && it.assignedBy !== me) out.push({ kind: 'task', ref: it.id, n: 1 })
+    else if (it.createdBy !== me && (first.get(`i:${it.id}`) || 0) > seen && !isFull(it) && !takers(it).includes(me)) out.push({ kind: 'item', ref: it.id, n: 1 })
+  }
+  for (const p of s.polls.values()) if (!p.closed && p.createdBy !== me && !p.votes.has(me)) out.push({ kind: 'poll', ref: p.id, n: 1 })
+  if (roles.get(me) === 'admin') {
+    const n = openReports(s).length
+    if (n) out.push({ kind: 'report', n })
+  }
+  return out
+}
+export const attentionCount = (list) => list.reduce((n, x) => n + x.n, 0)
 
 // ---------- Push ----------
 

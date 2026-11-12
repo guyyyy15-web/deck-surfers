@@ -92,6 +92,13 @@ export const markOfferedInstall = () => bump('cz.installAsked')
 /** "Send me a test notification" (the server sends one to each of my phones). */
 export const test = () => Y.api('POST', '/v2/push/test')
 
+/** Closes this yard's notifications that are still on the lock screen / in the notification center. */
+export function closeShown(tag) {
+  try {
+    navigator.serviceWorker?.ready.then((reg) => reg.getNotifications?.({ tag })).then((list) => list?.forEach((n) => n.close())).catch(() => undefined)
+  } catch { /* not supported */ }
+}
+
 export function setBadge(n) {
   try {
     if (n > 0) navigator.setAppBadge?.(n)?.catch(() => undefined)

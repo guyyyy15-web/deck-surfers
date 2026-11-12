@@ -5,7 +5,7 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
 
 ## Where things stand (2026-11-12)
 
-- **Live:** 0.11.0 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
+- **Live:** 0.12.0 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
   Worker `chatzer-sync` serves the API (same `server/` code as `nekamot-sync`, `--env chatzer`).
 - **Users:** first real day, 14 ducklings, 7 yards, 11 active in 24h. Run `bash scripts/chatzer-stats.sh` for now.
 - **Product docs (Claude artifacts, Guy's account):**
@@ -34,6 +34,12 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
   it with the same `GO` rule, a test keeps them equal). Routes: `#/y/<id>?item=…|chore=…|poll=…|reports=1`
   (`openFromLink()` opens the sheet, then the address goes back to `#/y/<id>`), `#/y/<id>/chat`, `#/today`
   (morning summary, the admin's nudge). New notifications: pass `go` to `Y.post(..., { body, to, go })`.
+- 0.12 what waits for me: `attention()` in yard.js derives it from the yard as it is now (unread chat, my due
+  turns, tasks given to me, polls I haven't voted in, new items still free, open reports for the admin), so each
+  mark goes away by itself. Home cards: a badge with the count and chips ("💬 הודעה", "📊 הצבעה"); the app icon
+  badge is the total. In a yard: chat count, "עוד לא הצבעת" on polls, "חדש" on new items. The chat has its own
+  seen pointer (`rec.chatSeq`, set when the chat opens). Opening a yard, or a yard with nothing waiting, closes
+  its notifications still on the lock screen (`push.closeShown`).
 
 ## How Guy works
 

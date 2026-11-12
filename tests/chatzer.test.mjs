@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fold, openReports, plannedReminders, choreRemindAt, splitList, summaryText, eventIcs, googleCalendarUrl, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite, parseItem, takers, isFull, eveBefore, nextMorning, icsFile, gcalLink, RRULES, goFor, GO } from '../chatzer/js/yard.js'
+import { fold, openReports, plannedReminders, choreRemindAt, splitList, summaryText, eventIcs, googleCalendarUrl, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite, parseItem, takers, isFull, eveBefore, nextMorning, icsFile, gcalLink, RRULES, goFor, GO, attention, attentionCount } from '../chatzer/js/yard.js'
 
 const A = 'a'.repeat(24)
 const B = 'b'.repeat(24)
@@ -398,4 +398,44 @@ test('0.11: deep links: where a notification opens; anything odd falls back to t
   assert.equal(plan.find((r) => r.id === 'c_c1').go, '?chore=c1')
   assert.equal(plan.find((r) => r.id === 't_t1').go, '?item=t1')
   assert.equal(plan.find((r) => r.id === `d_${B}`).go, '#/today')
+})
+
+test('0.12: what waits for me, and each thing goes away by itself when it no longer holds', () => {
+  const now = new Date(2026, 10, 12, 12).getTime()
+  const at = '2026-11-12T08:00:00.000Z'
+  let n = 0
+  const ev = (author, x) => ({ seq: ++n, author, at, ev: x })
+  const base = [
+    ev(A, { t: 'yard.meta', name: 'הבית', emoji: '🏡', kind: 'home' }),
+    ev(A, { t: 'chore.put', id: 'c1', name: 'כלים', emoji: '🫧', every: 'day', order: [B] }),
+    ev(A, { t: 'item.put', id: 't1', name: 'נייר' }),
+    ev(A, { t: 'item.assign', id: 't1', to: B }),
+    ev(A, { t: 'poll.put', id: 'p1', q: 'מתי?', options: ['א', 'ב'] }),
+    ev(A, { t: 'comment.put', cid: 'm1', id: 'chat', text: 'היי' }),
+    ev(A, { t: 'comment.put', cid: 'm2', id: 'chat', text: 'מה נשמע' }),
+  ]
+  const look = (events, rec = {}) => attention({ events, seenSeq: 0, ...rec }, fold(events, roles), B, roles, now)
+  const kinds = (l) => l.map((x) => x.kind).sort().join(',')
+  const all = look(base)
+  assert.equal(kinds(all), 'chat,chore,poll,task')
+  assert.equal(attentionCount(all), 5, '2 messages + turn + task + poll')
+  // Each goes away when it stops being true:
+  assert.ok(!look(base, { seenSeq: n, chatSeq: n }).some((x) => x.kind === 'chat'), 'chat read')
+  assert.ok(look(base, { seenSeq: n, chatSeq: 0 }).some((x) => x.kind === 'chat'), 'opening the yard alone does not read the chat')
+  const later = [...base,
+    ev(B, { t: 'chore.done', id: 'c1' }),
+    ev(B, { t: 'item.done', id: 't1', on: true }),
+    ev(B, { t: 'poll.vote', id: 'p1', opt: 0 })]
+  assert.equal(kinds(look(later)), 'chat', 'turn done, task done, voted')
+  const closed = [...base, ev(A, { t: 'poll.close', id: 'p1', on: true })]
+  assert.ok(!look(closed).some((x) => x.kind === 'poll'), 'a closed poll stops waiting')
+  // An event: a new item waits until it is seen or taken.
+  n = 0
+  const evs = [
+    ev(A, { t: 'yard.meta', name: 'מנגל', emoji: '🔥', kind: 'event' }),
+    ev(A, { t: 'item.put', id: 'i1', name: 'קרח' }),
+  ]
+  assert.equal(kinds(look(evs)), 'item')
+  assert.equal(look(evs, { seenSeq: n }).length, 0, 'seen')
+  assert.equal(look([...evs, ev(C, { t: 'item.claim', id: 'i1', on: true })]).length, 0, 'someone took it')
 })
