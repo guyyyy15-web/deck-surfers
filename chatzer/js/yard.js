@@ -120,7 +120,7 @@ export function fold(events, roles = new Map()) {
         break
       case 'member.profile':
         s.profiles.set(author, {
-          nickname: str(ev.nickname, 20), voice: ev.voice === 'm' || ev.voice === 'f' ? ev.voice : null,
+          nickname: str(ev.nickname, 20), voice: ev.voice === 'm' || ev.voice === 'f' ? ev.voice : null, morning: ev.morning === 'off' ? 'off' : 'on',
           ...Object.fromEntries(identity.LOOK_KEYS.filter((k) => typeof ev[k] === 'string').map((k) => [k, ev[k].slice(0, 16)])),
         })
         break
@@ -131,8 +131,9 @@ export function fold(events, roles = new Map()) {
         if (!ev.id || (it && it.createdBy !== author && !isAdmin(author))) break
         const name = str(ev.name, 60)
         if (!name) break
-        const base = it || { id: ev.id, createdBy: author, createdAt: at, claimedBy: null, claimedAt: null, done: false, doneBy: null, doneAt: null, photoId: null }
-        s.items.set(ev.id, { ...base, name, qty: str(ev.qty, 20), due: localDateTime(ev.due) })
+        const base = it || { id: ev.id, createdBy: author, createdAt: at, claimedBy: null, claimedAt: null, helpers: [], done: false, doneBy: null, doneAt: null, photoId: null }
+        const need = Math.min(10, Math.max(1, Math.floor(Number(ev.need)) || 1))
+        s.items.set(ev.id, { ...base, name, qty: str(ev.qty, 20), due: localDateTime(ev.due), need, helpers: base.helpers.slice(0, need - 1) })
         break
       }
       case 'item.delete': {
@@ -143,17 +144,24 @@ export function fold(events, roles = new Map()) {
       case 'item.claim': {
         const it = s.items.get(ev.id)
         if (!it || it.done) break
-        // First one in the log wins; only the one who took it (or an admin) can let it go.
-        if (ev.on && !it.claimedBy) Object.assign(it, { claimedBy: author, claimedAt: at })
-        else if (!ev.on && (it.claimedBy === author || isAdmin(author))) Object.assign(it, { claimedBy: null, claimedAt: null })
+        // First ones in the log win (as many as the item needs); only the one who took it (or an admin) can let it go.
+        // claimedBy stays the first taker, so older app versions still read it.
+        if (ev.on) {
+          if (!it.claimedBy) Object.assign(it, { claimedBy: author, claimedAt: at })
+          else if (it.claimedBy !== author && !it.helpers.includes(author) && 1 + it.helpers.length < (it.need || 1)) it.helpers.push(author)
+        } else if (it.claimedBy === author) {
+          const [next, ...rest] = it.helpers
+          Object.assign(it, { claimedBy: next || null, claimedAt: next ? at : null, helpers: rest })
+        } else if (it.helpers.includes(author)) it.helpers = it.helpers.filter((x) => x !== author)
+        else if (isAdmin(author)) Object.assign(it, { claimedBy: null, claimedAt: null, helpers: [] })
         break
       }
       case 'item.assign': {
         // Whoever runs the yard can give a task to someone (or free it), whoever had it.
         const it = s.items.get(ev.id)
         if (!it || it.done || !isAdmin(author)) break
-        if (ev.to === null) Object.assign(it, { claimedBy: null, claimedAt: null })
-        else if (typeof ev.to === 'string' && (!roles.size || roles.has(ev.to))) Object.assign(it, { claimedBy: ev.to, claimedAt: at, assignedBy: author })
+        if (ev.to === null) Object.assign(it, { claimedBy: null, claimedAt: null, helpers: [] })
+        else if (typeof ev.to === 'string' && (!roles.size || roles.has(ev.to))) Object.assign(it, { claimedBy: ev.to, claimedAt: at, assignedBy: author, helpers: it.helpers.filter((x) => x !== ev.to) })
         break
       }
       case 'item.done': {
@@ -345,13 +353,26 @@ export function dueState(chore, now = Date.now()) {
   return 'soon'
 }
 
-/** The event list: free first, then mine, then the others'. */
+/** Who brings it: the first taker, then the ones who joined (an item can need a few people). */
+export const takers = (it) => [it.claimedBy, ...(it.helpers || [])].filter(Boolean)
+export const isFull = (it) => takers(it).length >= (it.need || 1)
+
+/** The event list: still open first, then mine, then the others'. An item that needs 3 is taken when 3 took it. */
 export function eventBoard(s, me) {
   const all = [...s.items.values()].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
-  const free = all.filter((i) => !i.claimedBy)
-  const mine = all.filter((i) => i.claimedBy === me)
-  const others = all.filter((i) => i.claimedBy && i.claimedBy !== me)
-  return { free, mine, others, total: all.length, taken: all.length - free.length }
+  const mine = all.filter((i) => takers(i).includes(me))
+  const free = all.filter((i) => !isFull(i) && !takers(i).includes(me))
+  const others = all.filter((i) => isFull(i) && !takers(i).includes(me))
+  return { free, mine, others, total: all.length, taken: all.filter(isFull).length }
+}
+
+/** "קולה x3", "קולה ×3", "קולה *3" → { name: 'קולה', qty: '3' }. Anything else stays the name. */
+export function parseItem(text) {
+  const t = String(text || '').trim()
+  const m = /^(.+?)\s*[x×X*]\s*(\d{1,3})$/.exec(t) || /^(\d{1,3})\s*[x×X*]\s*(.+)$/.exec(t)
+  if (!m) return { name: t.slice(0, 60), qty: '' }
+  const [name, qty] = /^\d/.test(m[1]) ? [m[2], m[1]] : [m[1], m[2]]
+  return { name: name.trim().slice(0, 60), qty }
 }
 
 /** The home yard: my chores that are due, all chores, open and done tasks, and the duckling of the week. */
@@ -388,6 +409,14 @@ const atTime = (dayMs, hhmm) => {
   return d.getTime()
 }
 
+/** The evening before (19:00); for an event early in the morning, still the evening before. */
+export const eveBefore = (eventMs) => atTime(startOfDay(eventMs) - DAY, '19:00')
+/** The next 8:00 (today's, if it hasn't come yet). */
+export const nextMorning = (now = Date.now()) => {
+  const today = atTime(startOfDay(now), '08:00')
+  return today > now ? today : atTime(startOfDay(now) + DAY + 3 * 3600e3, '08:00') // +3h: a DST day is not 24h
+}
+
 /** When a chore with an hour should remind: its due day at that hour; if that already passed, the next such hour. */
 export function choreRemindAt(chore, now = Date.now()) {
   if (!chore.time) return null
@@ -402,6 +431,31 @@ export function choreRemindAt(chore, now = Date.now()) {
  */
 export function plannedReminders(s, roles = new Map(), now = Date.now()) {
   const out = []
+  const members = [...roles.keys()]
+  const voice = (m) => s.profiles.get(m)?.voice
+  const list = (xs) => (xs.length > 4 ? `${xs.slice(0, 4).join(', ')} ועוד ${xs.length - 4}` : xs.join(', '))
+  if (s.meta.kind === 'event' && s.meta.when) {
+    const at = eveBefore(Date.parse(s.meta.when))
+    if (at > now && at - now < 60 * DAY) {
+      for (const m of members) {
+        const mine = [...s.items.values()].filter((i) => takers(i).includes(m)).map((i) => `${i.name}${i.qty ? ` (${i.qty})` : ''}`)
+        if (!mine.length) continue
+        const v = voice(m)
+        out.push({ id: `e_${m}`.slice(0, 64), to: m, at, body: `🧺 מחר ${s.meta.emoji} ${s.meta.name}! ${v === 'm' ? 'אתה מביא' : v === 'f' ? 'את מביאה' : 'מביאים'}: ${list(mine)}` })
+      }
+    }
+  }
+  if (s.meta.kind === 'home') {
+    const at = nextMorning(now)
+    const end = startOfDay(at) + DAY
+    for (const m of members) {
+      if (s.profiles.get(m)?.morning === 'off') continue
+      const chores = [...s.chores.values()].filter((c) => turnOf(c, roles) === m && dueAt(c) < end).map((c) => `${c.emoji} ${c.name}${c.time ? ` ${c.time}` : ''}`)
+      const tasks = [...s.items.values()].filter((i) => !i.done && i.claimedBy === m && i.due && Date.parse(i.due) < end).map((i) => `📌 ${i.name}`)
+      const all = [...chores, ...tasks]
+      if (all.length) out.push({ id: `d_${m}`.slice(0, 64), to: m, at, body: `☀️ בוקר טוב! היום ברשימה: ${list(all)}` })
+    }
+  }
   for (const c of s.chores.values()) {
     const at = choreRemindAt(c, now)
     if (at && at - now < 60 * DAY) out.push({ id: `c_${c.id}`.slice(0, 64), to: turnOf(c, roles), at, body: `⏰ תורך: ${c.emoji} ${c.name}` })
@@ -427,10 +481,11 @@ export function summaryText(s, nameOf, { link = '', now = Date.now() } = {}) {
     if (s.meta.when) lines[0] += ` · ${new Intl.DateTimeFormat('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(s.meta.when))}`
     if (s.meta.where) lines[0] += ` · ${s.meta.where}`
     const items = [...s.items.values()].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
-    const free = items.filter((i) => !i.claimedBy)
+    const free = items.filter((i) => !isFull(i))
+    const names = (i) => takers(i).map(nameOf).join(' + ')
     lines.push('', 'מי מביא מה:')
-    for (const i of items.filter((x) => x.claimedBy)) lines.push(`✅ ${i.name}${i.qty ? ` (${i.qty})` : ''}: ${nameOf(i.claimedBy)}`)
-    for (const i of free) lines.push(`⬜ ${i.name}${i.qty ? ` (${i.qty})` : ''}: עוד פנוי`)
+    for (const i of items.filter(isFull)) lines.push(`✅ ${i.name}${i.qty ? ` (${i.qty})` : ''}: ${names(i)}`)
+    for (const i of free) lines.push(`⬜ ${i.name}${i.qty ? ` (${i.qty})` : ''}: ${takers(i).length ? `${names(i)}, ועוד מקום ל־${(i.need || 1) - takers(i).length}` : 'עוד פנוי'}`)
     if (free.length) lines.push('', `עוד ${free.length === 1 ? 'דבר אחד' : `${free.length} דברים`} שאף אחד לא לקח 👀`)
   } else {
     lines.push('', 'תורות:')
@@ -530,7 +585,7 @@ export async function localYards() {
 export const localYard = (id) => db.getYard(id).catch(() => null)
 // How others should address me (feminine/masculine) travels with my duckling, so the yard says "מביאה" or "מביא".
 const pick = (p) => ({
-  nickname: p.nickname, voice: db.loadSettings().voice,
+  nickname: p.nickname, voice: db.loadSettings().voice, morning: db.loadSettings().morning === false ? 'off' : 'on',
   ...Object.fromEntries(identity.LOOK_KEYS.filter((k) => p[k] !== undefined).map((k) => [k, p[k]])),
 })
 
@@ -622,12 +677,12 @@ export async function refresh(yid) {
   await flush(yid).catch(() => undefined)
   const added = await pull(yid)
   if (fresh) await markSeen(yid)
-  if (added) syncReminders(yid).catch(() => undefined)
+  syncReminders(yid).catch(() => undefined) // sends only what changed (the morning summary moves on each day)
   // Make sure the others know who I am (once, and again after I change my duckling).
   const st = stateOf(await db.getYard(yid))
   const mine = st.profiles.get(keys.memberId)
   const want = pick(profile || {})
-  if (profile && (!mine || ['nickname', 'voice', ...identity.LOOK_KEYS].some((k) => mine[k] !== want[k]))) {
+  if (profile && (!mine || ['nickname', 'voice', 'morning', ...identity.LOOK_KEYS].some((k) => mine[k] !== want[k]))) {
     await post(yid, [{ t: 'member.profile', ...want }], mine ? null : { body: `🐥 ${profile.nickname} בחצר!` })
   }
   return added

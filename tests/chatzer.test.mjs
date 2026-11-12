@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fold, openReports, plannedReminders, choreRemindAt, splitList, summaryText, eventIcs, googleCalendarUrl, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite } from '../chatzer/js/yard.js'
+import { fold, openReports, plannedReminders, choreRemindAt, splitList, summaryText, eventIcs, googleCalendarUrl, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite, parseItem, takers, isFull, eveBefore, nextMorning } from '../chatzer/js/yard.js'
 
 const A = 'a'.repeat(24)
 const B = 'b'.repeat(24)
@@ -253,7 +253,7 @@ test('ducklings: an old single accessory moves into its slot; new looks keep eve
   assert.ok(duck(null, 20).startsWith('<svg') && duck({ accessory: 'bow' }, 20).includes('#FF6B8A'))
   // fold keeps the whole look of a member
   const s = fold([e(B, { t: 'member.profile', nickname: 'מאיה', color: 'mint', hat: 'beret', body: 'hoodie', bodyColor: 'black', accessory: 'beret', evil: 'x' })], roles)
-  assert.deepEqual(s.profiles.get(B), { nickname: 'מאיה', voice: null, color: 'mint', hat: 'beret', body: 'hoodie', bodyColor: 'black', accessory: 'beret' })
+  assert.deepEqual(s.profiles.get(B), { nickname: 'מאיה', voice: null, morning: 'on', color: 'mint', hat: 'beret', body: 'hoodie', bodyColor: 'black', accessory: 'beret' })
 })
 
 test('undo: "done" and "pass" can be taken back by whoever did them (or an admin), only the latest one', () => {
@@ -301,4 +301,64 @@ test('summary for WhatsApp, and the event in a calendar', () => {
   assert.ok(ics.includes(`DTSTART:${new Date('2026-11-20T14:00').toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`))
   assert.match(googleCalendarUrl(s), /^https:\/\/calendar\.google\.com\/calendar\/render\?action=TEMPLATE/)
   assert.equal(eventIcs(fold([e(A, { t: 'yard.meta', name: 'בית', kind: 'home' })], roles)), null)
+})
+
+test('0.9: an item a few people bring together; the first taker stays claimedBy (older versions read it)', () => {
+  const s = fold([
+    e(A, { t: 'item.put', id: 'i1', name: 'קולה', qty: '3', need: 2 }),
+    e(B, { t: 'item.claim', id: 'i1', on: true }),
+    e(C, { t: 'item.claim', id: 'i1', on: true }),
+    e(A, { t: 'item.claim', id: 'i1', on: true }), // full: a third one is not added
+  ], roles)
+  const it = s.items.get('i1')
+  assert.deepEqual(takers(it), [B, C])
+  assert.equal(it.claimedBy, B)
+  assert.ok(isFull(it))
+  assert.deepEqual([eventBoard(s, A).taken, eventBoard(s, A).free.length, eventBoard(s, C).mine.length], [1, 0, 1])
+  const s2 = fold([
+    e(A, { t: 'item.put', id: 'i1', name: 'קולה', need: 3 }),
+    e(B, { t: 'item.claim', id: 'i1', on: true }),
+    e(C, { t: 'item.claim', id: 'i1', on: true }),
+    e(B, { t: 'item.claim', id: 'i1', on: false }), // the first one leaves: the next one moves up
+  ], roles)
+  assert.equal(s2.items.get('i1').claimedBy, C)
+  assert.deepEqual(eventBoard(s2, A).free.map((i) => i.id), ['i1'], 'needs 3, has 1: still open')
+  assert.equal(fold([e(A, { t: 'item.put', id: 'x', name: 'y', need: 99 })], roles).items.get('x').need, 10)
+})
+
+test('0.9: "קולה x3" keeps the amount; plain names stay names', () => {
+  assert.deepEqual(parseItem('קולה x3'), { name: 'קולה', qty: '3' })
+  assert.deepEqual(parseItem('קרח ×2'), { name: 'קרח', qty: '2' })
+  assert.deepEqual(parseItem('3x בירה'), { name: 'בירה', qty: '3' })
+  assert.deepEqual(parseItem('7up'), { name: '7up', qty: '' })
+  assert.deepEqual(parseItem('פיתות'), { name: 'פיתות', qty: '' })
+})
+
+test('0.9: the evening before an event, each one hears what they bring; a morning summary in home yards', () => {
+  const now = new Date(2026, 10, 10, 12, 0).getTime()
+  const ev = fold([
+    e(A, { t: 'yard.meta', name: 'מנגל', emoji: '🔥', kind: 'event', when: '2026-11-14T14:00' }),
+    e(B, { t: 'member.profile', nickname: 'מאיה', voice: 'f' }),
+    e(A, { t: 'item.put', id: 'i1', name: 'פיתות', qty: '20' }),
+    e(B, { t: 'item.claim', id: 'i1', on: true }),
+  ], roles)
+  const plan = plannedReminders(ev, roles, now)
+  const mine = plan.find((r) => r.id === `e_${B}`)
+  assert.equal(mine.to, B)
+  assert.equal(mine.at, eveBefore(new Date(2026, 10, 14, 14).getTime()))
+  assert.equal(new Date(mine.at).getDate(), 13)
+  assert.match(mine.body, /את מביאה: פיתות \(20\)/)
+  assert.ok(!plan.some((r) => r.id === `e_${C}`), 'nothing to bring: no reminder')
+
+  const home = (morning) => fold([
+    e(A, { t: 'yard.meta', name: 'הבית', emoji: '🏡', kind: 'home' }),
+    e(B, { t: 'member.profile', nickname: 'מאיה', ...(morning ? { morning } : {}) }),
+    e(A, { t: 'chore.put', id: 'c1', name: 'זבל', emoji: '🗑️', every: 'day', order: [B] }),
+  ], roles)
+  const d = plannedReminders(home(), roles, now).find((r) => r.id === `d_${B}`)
+  assert.equal(d.at, nextMorning(now))
+  assert.equal(new Date(d.at).getHours(), 8)
+  assert.match(d.body, /בוקר טוב.*זבל/)
+  assert.ok(!plannedReminders(home('off'), roles, now).some((r) => r.id === `d_${B}`), 'turned off: no morning summary')
+  assert.equal(nextMorning(new Date(2026, 10, 10, 6, 0).getTime()), new Date(2026, 10, 10, 8, 0).getTime())
 })

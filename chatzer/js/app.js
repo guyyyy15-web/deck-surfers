@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, CLOTH_COLORS, MOODS, SLOTS, lookOf, legacyAccessory } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.8.0'
+export const APP_VERSION = '0.9.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -22,6 +22,8 @@ const neutral = (f, m) => (f.startsWith(m) ? `${m}/${f.slice(m.length)}` : `${m}
 const g = (f, m) => (settings.voice === 'm' ? m : settings.voice === 'f' ? f : neutral(f, m))
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 const me = () => identity.myId()
+const VOICE_ERR = 'עוד רגע: אישה או גבר? ככה נדע איך לפנות'
+const offlineLine = () => `<div class="offline">אין רשת כרגע. מה ${g('שתעשי', 'שתעשה')} יישלח ${g('כשתחזרי', 'כשתחזור')}</div>`
 
 const ICON = {
   back: '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
@@ -280,11 +282,10 @@ function duckForm(p = {}, { compact = false, pets = false } = {}) {
   return `
     <label class="lbl" for="nick">איך קוראים לך?</label>
     <input class="input" id="nick" maxlength="20" autocomplete="nickname" value="${esc(p.nickname || '')}" placeholder="השם שיראו בחצר">
-    ${compact ? `<span class="lbl" id="clr-l">הצבע של הברווזון</span>
-    <div class="swatches" role="group" aria-labelledby="clr-l">${DUCK_COLORS.slice(0, 6).map((c) => `<button type="button" class="swatch" data-slot="color" data-val="${c.id}" aria-label="${c.label}" aria-pressed="${c.id === look.color}" style="background:${c.fill}"></button>`).join('')}</div>
-    <p class="small muted" style="margin:6px 0 0">בגדים, כובעים והבעות: אחר כך, ב"הברווזון שלי".</p>`
+    ${compact ? `<div class="mine-duck"><button type="button" class="mine-duck-btn" data-closet="color" aria-label="צבע אחר לברווזון" id="mypreview">${duck(look, 64)}</button>
+      <span class="small muted">זה הברווזון שלך. לחיצה עליו = צבע אחר.<br>בגדים וכובעים: אחר כך, ב"הברווזון שלי".</span></div>`
     : `<div id="closet">${closetHtml(look)}</div>`}
-    <span class="lbl" id="voice-l">איך לפנות אלייך? אני…</span>
+    <span class="lbl" id="voice-l">איך לפנות? אני…</span>
     <div class="choices" role="group" aria-labelledby="voice-l">
       <button type="button" class="choice" data-voice="f" aria-pressed="${settings.voice === 'f'}">אישה</button>
       <button type="button" class="choice" data-voice="m" aria-pressed="${settings.voice === 'm'}">גבר</button>
@@ -303,7 +304,11 @@ function bindDuckForm(root, onChange = () => undefined, start = identity.profile
       const rows = [...closet.querySelectorAll('.closet-row')].map((r) => r.scrollLeft)
       closet.innerHTML = closetHtml(state)
       closet.querySelectorAll('.closet-row').forEach((r, i) => (r.scrollLeft = rows[i] || 0))
-    } else root.querySelectorAll('[data-slot="color"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.val === state.color)))
+    } else {
+      root.querySelectorAll('[data-slot="color"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.val === state.color)))
+      const pv = root.querySelector('#mypreview')
+      if (pv) pv.innerHTML = duck(state, 64)
+    }
     onChange(state)
   }
   // Listen on the form (re-created with each screen), never on #app (it stays, so listeners would pile up).
@@ -312,7 +317,11 @@ function bindDuckForm(root, onChange = () => undefined, start = identity.profile
     const b = e.target.closest('[data-slot], [data-closet]')
     if (!b || !host.contains(b)) return
     if (b.dataset.slot) state[b.dataset.slot] = b.dataset.val
-    else if (b.dataset.closet === 'clear') Object.assign(state, { hat: 'none', face: 'none', neck: 'none', body: 'none', held: 'none', mood: 'happy' })
+    else if (b.dataset.closet === 'color') {
+      const others = DUCK_COLORS.filter((c) => c.id !== state.color)
+      state.color = others[Math.floor(Math.random() * others.length)].id
+      b.animate?.([{ transform: 'scale(1)' }, { transform: 'scale(1.15) rotate(-6deg)' }, { transform: 'scale(1)' }], { duration: 260 })
+    } else if (b.dataset.closet === 'clear') Object.assign(state, { hat: 'none', face: 'none', neck: 'none', body: 'none', held: 'none', mood: 'happy' })
     else {
       Object.assign(state, {
         color: DUCK_COLORS[Math.floor(Math.random() * DUCK_COLORS.length)].id, mood: MOODS[Math.floor(Math.random() * MOODS.length)].id,
@@ -335,27 +344,30 @@ function bindDuckForm(root, onChange = () => undefined, start = identity.profile
   return () => ({ nickname: root.querySelector('#nick').value, ...state, accessory: legacyAccessory(state) })
 }
 
+const freshLook = () => ({ color: DUCK_COLORS[Math.floor(Math.random() * 6)].id })
+
 function welcome() {
+  const fresh = freshLook()
   $app.innerHTML = `<main class="hero">
     <div class="hill hill-a" aria-hidden="true"></div><div class="hill hill-b" aria-hidden="true"></div>
     <span class="tag">מי מביא מה, תור מי</span>
     <h1>ברוכים הבאים לחצר</h1>
     <p class="lead">מנגל, ארוחת שישי, יום הולדת או מטלות הבית: כולם רואים מה חסר, לוקחים בלחיצה, ואף אחד לא שוכח.</p>
     ${demoParade()}
-    <form class="panel" id="f" novalidate>${duckForm({}, { compact: true, pets: true })}<p class="err" id="err" role="alert"></p>
+    <form class="panel" id="f" novalidate>${duckForm(fresh, { compact: true })}<p class="err" id="err" role="alert"></p>
 <p class="small muted" style="margin:12px 0 0">בהמשך מסכימים ל<button type="button" class="link-btn" data-privacy style="min-height:auto;padding:0;font-size:13px">מדיניות הפרטיות ותנאי השימוש</button>.</p>
       <button class="btn btn-primary btn-wide" type="submit" style="margin-top:12px">יאללה, לחצר! 🦆</button></form>
     <button type="button" class="link-btn" id="signin" style="font-weight:700">כבר יש לי ברווזון</button>
     <button type="button" class="link-btn" id="paste">יש לי קישור הזמנה</button>
     <p class="fine">בלי הרשמה, בלי מספר טלפון. הכל מוצפן בטלפון שלך.</p>
   </main>`
-  const read = bindDuckForm($app)
+  const read = bindDuckForm($app, undefined, fresh)
   bindPrivacyLinks($app)
   $app.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault()
     const v = read()
     if (!identity.validName(v.nickname)) return ($app.querySelector('#err').textContent = 'שם באורך 2–20 תווים, בבקשה')
-    if (!settings.voice) return ($app.querySelector('#err').textContent = 'איך לפנות אלייך? בחירה של אישה או גבר')
+    if (!settings.voice) return ($app.querySelector('#err').textContent = VOICE_ERR)
     await act(async () => {
       await identity.saveProfile(v)
       db.persist()
@@ -528,7 +540,7 @@ function askVoice() {
   if (settings.voice || settings.askedVoice || !identity.load()?.keys) return
   settings = { ...settings, askedVoice: true }
   db.saveSettings(settings)
-  openSheet(`<h2>איך לפנות אלייך?</h2>
+  openSheet(`<h2>איך לפנות? 🙂</h2>
     <p class="lead">ככה האפליקציה תכתוב לך, וככה הברווזונים בחצר יראו אותך ("מאיה מביאה", "דני מביא").</p>
     <div class="stack"><button class="btn btn-soft" data-v="f" type="button">אני אישה</button><button class="btn btn-soft" data-v="m" type="button">אני גבר</button>
       <button class="link-btn" data-v="" type="button">אחר כך</button></div>`, (root) => {
@@ -584,20 +596,20 @@ async function homeScreen() {
   const showSave = recs.length > 0 && !V.saved().length && !settings.hideSave
   const showInstall = !showSave && !push.standalone() && !settings.hideInstall && recs.length > 0
   $app.innerHTML = `<main class="screen">
-    ${navigator.onLine ? '' : '<div class="offline">אין רשת כרגע. מה שתעשי יישלח כשתחזרי</div>'}
+    ${navigator.onLine ? '' : offlineLine()}
     <header class="top"><h1>החצרות שלי</h1><a class="icon-btn" href="#/today" aria-label="היום שלי">${ICON.cal}</a><a class="me-btn" href="#/me" aria-label="הברווזון שלי">${duck(p, 48)}</a></header>
     <p class="lead">שלום ${esc(p?.nickname)} 🦆${waiting ? ` יש ${count(waiting, 'דבר אחד', 'דברים')} ${waiting === 1 ? 'שמחכה' : 'שמחכים'} לך` : ''}</p>
     ${todayCard}
     ${cards.length ? `<div class="cards">${cards.map((c) => c.html).join('')}</div>` : `
       <div class="empty">${demoParade()}<b>עוד אין חצרות</b><span>${g('פתחי', 'פתח')} חצר ו${g('הזמיני', 'הזמן')} את החבר׳ה, או ${g('בקשי', 'בקש')} קישור ממי שמארגנ/ת.</span></div>`}
     <div style="display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:22px">
-      <button class="btn btn-soft" id="new" type="button">${ICON.plus} חצר חדשה</button>
+      <div class="new-row"><button class="btn btn-soft" data-new="event" type="button">🔥 אירוע חדש</button><button class="btn btn-soft" data-new="home" type="button">🏡 חצר לבית</button></div>
       <button class="link-btn" id="paste" type="button">יש לי קישור הזמנה</button>
     </div>
     ${showSave ? `<div class="nudge" style="margin-top:22px"><span style="flex:1"><b>${g('שמרי', 'שמור')} את הברווזון</b>, כדי לא לאבד את החצרות אם הטלפון מתחלף.</span><a class="pill soft" href="#/me" style="display:inline-flex;align-items:center;text-decoration:none">${g('לשמירה', 'לשמירה')}</a></div>` : ''}
     ${showInstall ? `<div class="nudge" style="margin-top:22px"><span style="flex:1">רוצה לדעת כשתורך? ${g('הוסיפי', 'הוסף')} את החצר למסך הבית.</span><button class="pill soft" id="install" type="button">איך?</button></div>` : ''}
   </main>`
-  $app.querySelector('#new').onclick = newYardSheet
+  $app.querySelectorAll('[data-new]').forEach((b) => (b.onclick = () => newYardSheet({ kind: b.dataset.new })))
   $app.querySelector('#paste').onclick = quickPaste
   $app.querySelector('#install')?.addEventListener('click', installSheet)
 }
@@ -636,11 +648,19 @@ const CHORE_STARTERS = [
 ]
 /** The ideas this person should see: pet chores only with a matching pet. */
 const choreIdeas = () => CHORE_STARTERS.filter((c) => !c.pet || (hasPet() && (c.pet === 'any' || c.pet === settings.pet || settings.pet === 'other')))
+/** The chore ideas as chips; `picked` keeps what was already chosen (by index), new pet chores come pre-picked. */
+const choreChips = (picked = null) => choreIdeas().map((c) => {
+  const i = CHORE_STARTERS.indexOf(c)
+  const on = picked ? picked.has(String(i)) || (!!c.pet && !!c.on) : !!c.on
+  return `<button type="button" class="choice" data-chore="${i}" aria-pressed="${on}">${c.emoji} ${c.name}</button>`
+}).join('')
 const everyOptions = (sel = 'week') => Object.entries(Y.EVERY).map(([k, v]) => `<option value="${k}"${k === sel ? ' selected' : ''}>${v.label}</option>`).join('')
 const EVENT_EMOJI = ['🔥', '🎂', '🍷', '🧺', '🎉', '🏖️', '🎄', '🥳']
 const HOME_EMOJI = ['🏡', '🏠', '🛋️', '🧹', '🪴', '🐕']
 
-function newYardSheet(prefill = null) {
+/** `start`: { kind } opens with that kind picked; { again: true, kind, name, emoji, items } is "one more like this". */
+function newYardSheet(start = {}) {
+  const prefill = start.again ? start : null
   let kind = null
   openSheet(`<h2>חצר חדשה</h2><p class="lead">מה מארגנים?</p>
     <div class="kind-cards" style="margin-top:14px">
@@ -649,7 +669,7 @@ function newYardSheet(prefill = null) {
     </div>
     <form id="details" hidden novalidate></form>`, (root) => {
     const form = root.querySelector('#details')
-    if (prefill) setTimeout(() => root.querySelector(`[data-kind="${prefill.kind}"]`)?.click())
+    if (start.kind) setTimeout(() => root.querySelector(`[data-kind="${start.kind}"]`)?.click())
     root.querySelectorAll('.kind').forEach((b) => (b.onclick = () => {
       kind = b.dataset.kind
       root.querySelectorAll('.kind').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
@@ -672,9 +692,10 @@ function newYardSheet(prefill = null) {
         : `
         <label class="lbl" for="yname">איך קוראים לחצר?</label>
         <input class="input" id="yname" maxlength="30" placeholder="למשל: הדירה בפלורנטין">
+        <span class="lbl" id="pet-l">יש בעל חיים בבית?</span>
+        <div class="choices" role="group" aria-labelledby="pet-l">${PETS.map((x) => `<button type="button" class="choice" data-pet="${x.id}" aria-pressed="${(settings.pet || 'none') === x.id}">${x.label}</button>`).join('')}</div>
         <span class="lbl" id="ch-l">מטלות בתורות (בוחרים כמה שרוצים, אפשר לשנות אחר כך)</span>
-        <div class="choices" role="group" aria-labelledby="ch-l">${choreIdeas().map((c) => `<button type="button" class="choice" data-chore="${CHORE_STARTERS.indexOf(c)}" aria-pressed="${!!c.on}">${c.emoji} ${c.name}</button>`).join('')}</div>
-        ${hasPet() ? '' : '<p class="small muted" style="margin:6px 0 0">יש בעל חיים? אפשר לציין במסך "הברווזון שלי", ונציע גם מטלות כמו טיול עם הכלב.</p>'}
+        <div class="choices" role="group" aria-labelledby="ch-l" id="chorelist">${choreChips()}</div>
         <label class="lbl" for="cchore">מטלה משלך</label>
         <div class="add-row" style="margin-top:0"><input class="input" id="cchore" maxlength="40" placeholder="למשל: להאכיל את הדגים" autocomplete="off" enterkeyhint="done">
           <label class="sr" for="cevery">כל כמה זמן</label><select class="input" id="cevery" style="flex:0 0 auto;width:auto;padding:0 10px">${everyOptions('week')}</select>
@@ -684,6 +705,7 @@ function newYardSheet(prefill = null) {
         <div class="choices" role="group" aria-labelledby="emo-l">${HOME_EMOJI.map((e, i) => `<button type="button" class="choice" data-emo="${e}" aria-pressed="${i === 0}" aria-label="${e}">${e}</button>`).join('')}</div>`
       form.insertAdjacentHTML('beforeend', '<p class="err" id="err" role="alert"></p><button class="btn btn-primary btn-wide" type="submit">פותחים חצר! 🐥</button>')
       if (prefill) root.querySelector('h2').textContent = 'עוד אחד כזה 🔁'
+      else root.querySelector('h2').textContent = kind === 'event' ? 'אירוע חדש 🔥' : 'חצר לבית 🏡'
       const single = (sel) => form.querySelectorAll(sel).forEach((x) => (x.onclick = () => form.querySelectorAll(sel).forEach((y) => y.setAttribute('aria-pressed', String(y === x)))))
       single('[data-tpl]')
       single('[data-emo]')
@@ -692,7 +714,16 @@ function newYardSheet(prefill = null) {
         const em = form.querySelector(`[data-emo="${t.emoji}"]`)
         if (em) form.querySelectorAll('[data-emo]').forEach((y) => y.setAttribute('aria-pressed', String(y === em)))
       }))
-      form.querySelectorAll('[data-chore]').forEach((x) => (x.onclick = () => x.setAttribute('aria-pressed', String(x.getAttribute('aria-pressed') !== 'true'))))
+      const bindChores = () => form.querySelectorAll('[data-chore]').forEach((x) => (x.onclick = () => x.setAttribute('aria-pressed', String(x.getAttribute('aria-pressed') !== 'true'))))
+      bindChores()
+      form.querySelectorAll('[data-pet]').forEach((b) => (b.onclick = () => {
+        form.querySelectorAll('[data-pet]').forEach((y) => y.setAttribute('aria-pressed', String(y === b)))
+        settings = { ...settings, pet: b.dataset.pet }
+        db.saveSettings(settings)
+        const picked = new Set([...form.querySelectorAll('[data-chore][aria-pressed="true"]')].map((x) => x.dataset.chore))
+        form.querySelector('#chorelist').innerHTML = choreChips(picked)
+        bindChores()
+      }))
       // Own chores / items: each becomes a picked chip (tap to drop it). Enter adds instead of submitting.
       const addOwn = (inputSel, listSel, make) => {
         const input = form.querySelector(inputSel)
@@ -759,7 +790,7 @@ function newYardSheet(prefill = null) {
         meta = { name, emoji, kind, when: when || null, where: form.querySelector('#where').value.trim() }
         const tpl = TEMPLATES[form.querySelector('[data-tpl][aria-pressed="true"]')?.dataset.tpl || 'none']
         const own = [...form.querySelectorAll('[data-own][aria-pressed="true"]')].map((x) => JSON.parse(x.dataset.own).name)
-        starters = [...tpl.items, ...own].map((n) => ({ t: 'item.put', id: Y.newId('t'), name: n }))
+        starters = [...tpl.items, ...own].map((n) => ({ t: 'item.put', id: Y.newId('t'), ...Y.parseItem(n) }))
       } else {
         meta = { name, emoji, kind }
         starters = [...form.querySelectorAll('[data-chore][aria-pressed="true"]')].map((x) => {
@@ -820,19 +851,20 @@ async function joinScreen(code) {
     lead = [whenText(st.meta.when), st.meta.where, `${count(peek.members, 'ברווזון אחד כבר', 'ברווזונים כבר')} בחצר`, b.free.length ? `עוד ${count(b.free.length, 'דבר אחד', 'דברים')} שאף אחד לא לקח` : ''].filter(Boolean).map(esc).join(' · ')
   }
   const p = identity.profile()
+  const fresh = freshLook()
   hero(`
     <span class="tag">${opener?.nickname ? `${esc(opener.nickname)} ${opener.voice === 'm' ? 'מזמין' : opener.voice === 'f' ? 'מזמינה' : 'מזמין/ה'} אותך לחצר` : 'הזמנה לחצר'}</span>
     <h1>${esc(st.meta.name)} ${esc(st.meta.emoji)}</h1>
     <p class="lead">${lead}</p>
     ${parade(ducks)}
     <form class="panel" id="f" novalidate>
-      ${p ? `<div class="member">${duck(p, 48)}<span class="n">${g('תיכנסי', 'תיכנס')} בתור <b>${esc(p.nickname)}</b></span><a class="link-btn" href="#/me">שינוי</a></div>` : `${duckForm({}, { compact: true })}<p class="small muted" style="margin:12px 0 0">בהמשך מסכימים ל<button type="button" class="link-btn" data-privacy style="min-height:auto;padding:0;font-size:13px">מדיניות הפרטיות ותנאי השימוש</button>.</p><button class="link-btn" type="button" id="signin" style="margin-top:6px">כבר יש לי ברווזון? כניסה</button>`}
+      ${p ? `<div class="member">${duck(p, 48)}<span class="n">${g('תיכנסי', 'תיכנס')} בתור <b>${esc(p.nickname)}</b></span><a class="link-btn" href="#/me">שינוי</a></div>` : `${duckForm(fresh, { compact: true })}<p class="small muted" style="margin:12px 0 0">בהמשך מסכימים ל<button type="button" class="link-btn" data-privacy style="min-height:auto;padding:0;font-size:13px">מדיניות הפרטיות ותנאי השימוש</button>.</p><button class="link-btn" type="button" id="signin" style="margin-top:6px">כבר יש לי ברווזון? כניסה</button>`}
       ${peek.full ? '<p class="err">החצר מלאה (20 ברווזונים). אי אפשר להצטרף כרגע.</p>' : '<p class="err" id="err" role="alert"></p>'}
       <button class="btn btn-primary btn-wide" type="submit" ${peek.full ? 'disabled' : ''}>אני בחצר! 🦆</button>
     </form>
     <p class="fine">בלי הרשמה ובלי להתקין. אפשר להוסיף למסך הבית אחר כך, בשביל התראות.</p>
     ${push.isIOS() && !push.standalone() ? `<button class="link-btn" type="button" id="copyforapp" style="font-size:14px">כבר יש לך את החצר על מסך הבית? העתקת הקישור, והדבקה שם</button>` : ''}`)
-  const read = p ? null : bindDuckForm($app)
+  const read = p ? null : bindDuckForm($app, undefined, fresh)
   bindPrivacyLinks($app)
   $app.querySelector('#signin')?.addEventListener('click', () => signInSheet(() => joinScreen(code)))
   $app.querySelector('#copyforapp')?.addEventListener('click', async () => {
@@ -848,7 +880,7 @@ async function joinScreen(code) {
     if (read) {
       const v = read()
       if (!identity.validName(v.nickname)) return ($app.querySelector('#err').textContent = 'שם באורך 2–20 תווים, בבקשה')
-      if (!settings.voice) return ($app.querySelector('#err').textContent = 'איך לפנות אלייך? בחירה של אישה או גבר')
+      if (!settings.voice) return ($app.querySelector('#err').textContent = VOICE_ERR)
       await identity.saveProfile(v)
       db.persist()
     }
@@ -891,13 +923,14 @@ async function yardScreen(id) {
   const polls = [...st.polls.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).map((p) => pollCard(rec, st, p, myId, isAdmin)).join('')
   const unreadChat = st.chat.filter((c) => c.author !== myId && rec.events.find((e) => e.ev?.cid === c.cid)?.seq > (rec.seenSeq || 0)).length
   $app.innerHTML = `<main class="screen">
-    ${navigator.onLine ? pending : '<div class="offline">אין רשת כרגע. מה שתעשי יישלח כשתחזרי</div>'}
+    ${navigator.onLine ? pending : offlineLine()}
     <header class="top">
       <a class="icon-btn" href="#/" aria-label="חזרה לחצרות">${ICON.back}</a>
       <h1>${esc(st.meta.name)} ${esc(st.meta.emoji)}${sub ? `<span class="sub">${sub}</span>` : ''}</h1>
       <button class="icon-btn" id="menu" type="button" aria-label="אפשרויות החצר">${ICON.dots}</button>
     </header>
     ${isAdmin && Y.openReports(st).length ? `<div class="nudge" style="background:var(--tile-orange)"><span style="flex:1">🚩 ${count(Y.openReports(st).length, 'דיווח פתוח', 'דיווחים פתוחים')} בחצר</span><button class="pill soft" id="reports" type="button">לטפל</button></div>` : ''}
+    ${tipHtml(st.meta.kind)}
     ${body}
     ${polls}
     <div class="actions-bar">
@@ -912,31 +945,69 @@ async function yardScreen(id) {
   if (!st.chat.some((c) => c.author !== myId && rec.events.find((e) => e.ev?.cid === c.cid)?.seq > (rec.seenSeq || 0))) Y.markSeen(id)
 }
 
+/** Members who took nothing yet (the admin can remind them). */
+const idleMembers = (rec, st) => (rec.members || []).map((m) => m.id).filter((m) => ![...st.items.values()].some((i) => Y.takers(i).includes(m)))
+
+const TIPS = {
+  event: [
+    ['e-item', 'לחיצה על שם של פריט: לשנות כמות, או לסמן שמביאים אותו כמה אנשים ביחד.'],
+    ['e-qty', 'אפשר להוסיף כמה דברים בבת אחת ("קרח, מחצלות, נרות"), או עם כמות: "קולה x3".'],
+    ['e-share', '📤 לוואטסאפ שולח לקבוצה סיכום של מי מביא מה, ומה עוד חסר.'],
+  ],
+  home: [
+    ['h-chore', 'לחיצה על מטלה: לשנות כל כמה זמן, להוסיף שעה עם תזכורת, או לראות מי בתור.'],
+    ['h-done', '"בוצע + הוכחה": אפשר לצרף תמונה, והתור עובר לבד לבא בתור.'],
+    ['h-day', '📅 בדף הבית, "היום שלי" מרכז את כל מה שמחכה לך מכל החצרות.'],
+  ],
+}
+function tipHtml(kind) {
+  const t = (TIPS[kind] || []).find(([k]) => !(settings.tips || []).includes(k))
+  return t ? `<div class="tip"><span aria-hidden="true">💡</span><span style="flex:1">${t[1]}</span><button class="link-btn" type="button" id="tipok" data-tip="${t[0]}">הבנתי</button></div>` : ''
+}
+
+/** A small hop of joy: my duckling jumps (and the phone buzzes, where it can). */
+function celebrate(text = '') {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  document.querySelector('.joy')?.remove()
+  const el = document.createElement('div')
+  el.className = 'joy'
+  el.setAttribute('aria-hidden', 'true')
+  el.innerHTML = `<span class="joy-duck">${duck(identity.profile() || {}, 96)}</span>${['✨', '🎉', '⭐', '💛', '✨'].map((x, i) => `<span class="joy-bit" style="--i:${i}">${x}</span>`).join('')}${text ? `<span class="joy-t">${esc(text)}</span>` : ''}`
+  document.body.append(el)
+  navigator.vibrate?.(25)
+  setTimeout(() => el.remove(), 1300)
+}
+
 function eventYardBody(rec, st, myId) {
   const b = Y.eventBoard(st, myId)
+  const isAdmin = (rec.members || []).some((m) => m.id === myId && m.role === 'admin')
   const mother = duck(who(st, rec, (rec.members || []).find((m) => m.role === 'admin')?.id).look, 44, { crown: true })
+  const idle = idleMembers(rec, st).filter((m) => m !== myId)
+  const canNudge = isAdmin && b.free.length && idle.length
   const nudge = !b.total
     ? `<div class="nudge">${mother}<span>הרשימה ריקה. מה צריך להביא?</span></div>`
     : b.free.length
-      ? `<div class="nudge">${mother}<span><b>גאגא!</b> עוד ${count(b.free.length, 'דבר אחד', 'דברים')} שאף אחד לא לקח 👀</span></div>`
+      ? `<div class="nudge">${mother}<span style="flex:1"><b>גאגא!</b> עוד ${count(b.free.length, 'דבר אחד', 'דברים')} שאף אחד לא לקח 👀</span>${canNudge ? `<button class="pill soft" id="nudgefree" type="button">🔔 להזכיר</button>` : ''}</div>`
       : '<div class="nudge party"><span>🎉</span><span><b>הכל נלקח!</b> החצר מוכנה.</span></div>'
   const row = (it) => {
-    const qty = it.qty ? ` (${esc(it.qty)})` : ''
-    let side
+    const qty = it.qty ? ` <span class="qty">×${esc(it.qty)}</span>` : ''
+    const ts = Y.takers(it)
+    const need = it.need || 1
+    const mineHere = ts.includes(myId)
+    let side = ''
     let cls = 'row'
-    if (!it.claimedBy) side = `<button class="pill" type="button" data-claim="${it.id}">${g('אני מביאה!', 'אני מביא!')}</button>`
-    else {
-      const w = who(st, rec, it.claimedBy)
-      if (it.claimedBy === myId) cls += ' mine'
-      side = `<span class="who">${duckOf(st, rec, it.claimedBy)}${esc(w.name)}${it.claimedBy === myId ? '' : ' ✓'}</span>`
-    }
-    return `<li class="${cls}"><button class="what" type="button" data-item="${it.id}"><span class="t">${esc(it.name)}${qty}</span></button>${side}</li>`
+    if (mineHere) cls += ' mine'
+    const ducks = ts.length ? `<span class="who">${ts.slice(0, 3).map((m) => duckOf(st, rec, m)).join('')}${ts.length === 1 ? esc(who(st, rec, ts[0]).name) : ''}${!mineHere && Y.isFull(it) ? ' ✓' : ''}</span>` : ''
+    if (!Y.isFull(it) && !mineHere) side = `<button class="pill claim" type="button" data-claim="${it.id}">${ts.length ? 'גם אני!' : g('אני מביאה!', 'אני מביא!')}</button>`
+    const sub = need > 1 ? `<span class="s">${ts.map((m) => who(st, rec, m).name).join(' + ') || 'מביאים ביחד'} · ${ts.length}/${need}</span>` : ''
+    return `<li class="${cls}"><button class="what" type="button" data-item="${it.id}"><span class="t">${esc(it.name)}${qty}</span>${sub}</button>${need > 1 || !side ? ducks : ''}${side}</li>`
   }
-  return `${nudge}
+  const mineStrip = b.mine.length ? `<div class="mine-strip"><span aria-hidden="true">🧺</span><span><b>${g('את מביאה', 'אתה מביא')}:</b> ${b.mine.map((i) => esc(i.name) + (i.qty ? ` ×${esc(i.qty)}` : '')).join(', ')}</span></div>` : ''
+  return `${nudge}${mineStrip}
     ${b.total ? `<div class="progress"><span class="bar" aria-hidden="true"><span style="width:${Math.round((b.taken / b.total) * 100)}%"></span></span><span style="font-size:14px;font-weight:700">${b.taken} מתוך ${b.total}</span></div>` : ''}
     <ul class="list">${[...b.free, ...b.mine, ...b.others].map(row).join('')}</ul>
     <form class="add-row" id="add" novalidate><label class="sr" for="addin">פריט חדש</label>
-      <input class="input" id="addin" maxlength="60" placeholder="מה עוד צריך? למשל: קרח" autocomplete="off" enterkeyhint="done">
+      <input class="input" id="addin" maxlength="60" placeholder="מה עוד צריך? למשל: קולה x3" autocomplete="off" enterkeyhint="done">
       <button class="add-btn" type="submit" aria-label="הוספה">${ICON.plus}</button></form>`
 }
 
@@ -1021,6 +1092,12 @@ function bindYard(rec, st, roles, myId) {
   $('#invite').onclick = () => inviteSheet(id)
   $('#poll').onclick = () => pollSheet(id)
   $('#newchore')?.addEventListener('click', () => newChoreSheet(id))
+  $('#nudgefree')?.addEventListener('click', (e) => nudgeFree(rec, st, e.currentTarget))
+  $('#tipok')?.addEventListener('click', () => {
+    settings = { ...settings, tips: [...(settings.tips || []), $('#tipok').dataset.tip] }
+    db.saveSettings(settings)
+    $('.tip')?.remove()
+  })
   $app.querySelectorAll('[data-claim]').forEach((b) => (b.onclick = () => claim(id, b.dataset.claim, true, b)))
   $app.querySelectorAll('[data-item]').forEach((b) => (b.onclick = () => itemSheet(id, b.dataset.item)))
   $app.querySelectorAll('[data-chore]').forEach((b) => (b.onclick = () => choreSheet(id, b.dataset.chore)))
@@ -1052,7 +1129,7 @@ function bindYard(rec, st, roles, myId) {
     if (!names.length) return input.focus()
     if (names.length > 1) {
       const p = identity.profile()
-      const evs = names.map((n) => ({ t: 'item.put', id: Y.newId('t'), name: n }))
+      const evs = names.map((n) => ({ t: 'item.put', id: Y.newId('t'), ...(st.meta.kind === 'event' ? Y.parseItem(n) : { name: n }) }))
       input.value = ''
       await act(async () => {
         await Y.post(id, evs, { body: `${p.nickname}: הוספתי ${names.length} דברים: ${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''}` })
@@ -1064,17 +1141,35 @@ function bindYard(rec, st, roles, myId) {
       })
       return
     }
-    const name = names[0]
+    const { name, qty } = st.meta.kind === 'event' ? Y.parseItem(names[0]) : { name: names[0], qty: '' }
     const itemId = Y.newId('t')
     const p = identity.profile()
     input.value = ''
     await act(async () => {
-      await Y.post(id, [{ t: 'item.put', id: itemId, name }], st.meta.kind === 'event' ? { body: `${p.nickname}: הוספתי לרשימה ${name}` } : { body: `${p.nickname}: משימה חדשה, ${name}` })
+      await Y.post(id, [{ t: 'item.put', id: itemId, name, ...(qty ? { qty } : {}) }], st.meta.kind === 'event' ? { body: `${p.nickname}: הוספתי לרשימה ${name}` } : { body: `${p.nickname}: משימה חדשה, ${name}` })
       await render(true)
       $app.querySelector('#addin')?.focus()
       toast(`נוסף: ${name}`, { label: st.meta.kind === 'event' ? g('ואני מביאה', 'ואני מביא') : 'ואני על זה', run: () => claim(id, itemId, true) })
     })
   }
+}
+
+/** The admin reminds whoever took nothing yet (once in a few hours, so nobody gets nagged). */
+async function nudgeFree(rec, st, btn) {
+  const last = settings.nudged?.[rec.id] || 0
+  if (Date.now() - last < 3 * 3600e3) return toast('כבר הזכרת לא מזמן. אפשר שוב בעוד כמה שעות')
+  const idle = idleMembers(rec, st).filter((m) => m !== me())
+  const free = Y.eventBoard(st, me()).free.map((i) => i.name)
+  busy(btn, true)
+  const ok = await act(async () => {
+    await Y.post(rec.id, [{ t: 'yard.nudge' }], { body: `${identity.profile().nickname}: עוד חסר ${free.slice(0, 3).join(', ')}${free.length > 3 ? '…' : ''}. מי לוקח/ת? 🙏`, to: idle.slice(0, 30) })
+    return true
+  })
+  busy(btn, false)
+  if (!ok) return
+  settings = { ...settings, nudged: { ...(settings.nudged || {}), [rec.id]: Date.now() } }
+  db.saveSettings(settings)
+  toast(`נשלחה תזכורת ל${count(idle.length, 'ברווזון אחד', 'ברווזונים')} 🔔`)
 }
 
 async function claim(id, itemId, on, btn) {
@@ -1083,10 +1178,13 @@ async function claim(id, itemId, on, btn) {
     await Y.post(id, [{ t: 'item.claim', id: itemId, on }])
     const st = Y.stateOf(await Y.localYard(id))
     const it = st.items.get(itemId)
-    if (on && it && it.claimedBy !== me()) {
+    if (on && it && !Y.takers(it).includes(me())) {
       const w = who(st, null, it.claimedBy)
       toast(`${w.name} ${w.g('הקדימה', 'הקדים')} אותך 🙈`)
-    } else if (it) toast(on ? `${it.name}: ${g('לקחת', 'לקחת')} ✓` : `${it.name}: שוחרר`, { label: 'בטל', run: () => claim(id, itemId, !on) })
+    } else if (it) {
+      toast(on ? `${it.name}: ${g('לקחת', 'לקחת')} ✓` : `${it.name}: שוחרר`, { label: 'בטל', run: () => claim(id, itemId, !on) })
+      if (on) celebrate(Y.eventBoard(st, me()).free.length ? '' : '🎉 הכל נלקח!')
+    }
   })
   await closeSheet()
   await render(true)
@@ -1127,17 +1225,21 @@ async function itemSheet(id, itemId) {
   const isAdmin = Y.rolesOf(rec).get(myId) === 'admin'
   const canEdit = it.createdBy === myId || isAdmin
   const event = st.meta.kind === 'event'
+  const ts = Y.takers(it)
+  const need = it.need || 1
+  const mine = ts.includes(myId)
   const status = it.done
     ? `${who(st, rec, it.doneBy).name} · בוצע ${relDay(it.doneAt)} ✓`
-    : it.claimedBy ? (() => {
-      const w = who(st, rec, it.claimedBy)
-      return `${w.name} ${event ? (it.claimedBy === myId ? g('מביאה', 'מביא') : w.g('מביאה', 'מביא')) : 'על זה'}`
-    })() : 'אף אחד לא לקח עדיין'
+    : ts.length ? (() => {
+      if (ts.length > 1) return `${ts.map((m) => who(st, rec, m).name).join(' + ')} מביאים`
+      const w = who(st, rec, ts[0])
+      return `${w.name} ${event ? (ts[0] === myId ? g('מביאה', 'מביא') : w.g('מביאה', 'מביא')) : 'על זה'}`
+    })() + (need > ts.length ? ` · עוד מקום ל־${need - ts.length}` : '') : need > 1 ? `מביאים ביחד: צריך ${need}` : 'אף אחד לא לקח עדיין'
   const btns = []
   if (isAdmin && !it.done && (rec.members || []).length > 1) btns.push(`<button class="btn btn-ghost" data-a="assign">👉 ${it.claimedBy ? 'לתת למישהו אחר' : 'לשייך למישהו'}</button>`)
-  if (!it.done && !it.claimedBy) btns.push(`<button class="btn btn-primary" data-a="claim">${event ? g('אני מביאה!', 'אני מביא!') : 'אני על זה!'}</button>`)
+  if (!it.done && !mine && !Y.isFull(it)) btns.push(`<button class="btn btn-primary" data-a="claim">${ts.length ? 'גם אני!' : event ? g('אני מביאה!', 'אני מביא!') : 'אני על זה!'}</button>`)
   if (!event && !it.done && (it.claimedBy === myId || !it.claimedBy)) btns.push('<button class="btn btn-soft" data-a="done">בוצע + הוכחה</button>')
-  if (!it.done && it.claimedBy && (it.claimedBy === myId || isAdmin)) btns.push(`<button class="btn btn-ghost" data-a="unclaim">${it.claimedBy === myId ? 'בעצם לא אוכל' : 'לשחרר את הפריט'}</button>`)
+  if (!it.done && ts.length && (mine || isAdmin)) btns.push(`<button class="btn btn-ghost" data-a="unclaim">${mine ? 'בעצם לא אוכל' : 'לשחרר את הפריט'}</button>`)
   if (it.done && (it.doneBy === myId || isAdmin)) btns.push('<button class="btn btn-ghost" data-a="undone">לבטל את הסימון</button>')
   openSheet(`<h2>${esc(it.name)}${it.qty ? ` (${esc(it.qty)})` : ''}</h2>
     <p class="lead">${esc(status)}${it.due ? ` · ⏰ ${esc(whenShort(Date.parse(it.due)))}` : ''}</p>
@@ -1145,6 +1247,7 @@ async function itemSheet(id, itemId) {
     <div class="stack">${btns.join('')}</div>
     ${canEdit ? `<form id="edit" novalidate><label class="lbl" for="iname">שם</label><input class="input" id="iname" maxlength="60" value="${esc(it.name)}">
       <label class="lbl" for="iqty">כמה? (לא חובה)</label><input class="input" id="iqty" maxlength="20" value="${esc(it.qty || '')}" placeholder="למשל: 20, 2 קילו">
+      ${event ? `<label class="lbl" for="ineed">כמה אנשים מביאים את זה?</label><select class="input" id="ineed">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${n === need ? ' selected' : ''}>${n === 1 ? 'אחד' : `${n}, ביחד`}</option>`).join('')}</select>` : ''}
       <label class="lbl" for="idue">מתי? (לא חובה: נשלח תזכורת בזמן)</label><input class="input" id="idue" type="datetime-local" value="${esc(it.due || '')}">
       <div class="stack"><button class="btn btn-soft" type="submit">שמירה</button><button class="btn btn-danger" type="button" data-a="delete">למחוק מהרשימה</button></div></form>` : ''}`, (root) => {
     root.querySelectorAll('[data-a]').forEach((b) => (b.onclick = async () => {
@@ -1158,7 +1261,7 @@ async function itemSheet(id, itemId) {
         if (!confirm(`למחוק את "${it.name}"?`)) return
         await act(() => Y.post(id, [{ t: 'item.delete', id: itemId }]))
         toast(`נמחק: ${it.name}`, { label: 'בטל', run: () => act(async () => {
-          await Y.post(id, [{ t: 'item.put', id: itemId, name: it.name, qty: it.qty || '', due: it.due || null }])
+          await Y.post(id, [{ t: 'item.put', id: itemId, name: it.name, qty: it.qty || '', due: it.due || null, need }])
           await render(true)
         }) })
       }
@@ -1173,7 +1276,7 @@ async function itemSheet(id, itemId) {
       e.preventDefault()
       const name = form.querySelector('#iname').value.trim()
       if (!name) return
-      await act(() => Y.post(id, [{ t: 'item.put', id: itemId, name, qty: form.querySelector('#iqty').value.trim(), due: form.querySelector('#idue').value || null }]))
+      await act(() => Y.post(id, [{ t: 'item.put', id: itemId, name, qty: form.querySelector('#iqty').value.trim(), due: form.querySelector('#idue').value || null, need: Number(form.querySelector('#ineed')?.value || need) }]))
       await closeSheet()
       await render(true)
     }
@@ -1443,6 +1546,7 @@ async function doneSheet(id, target) {
       busy(btn, false)
       if (!okDone) return
       await closeSheet()
+      celebrate()
       toast('כל הכבוד! 🐥', { label: 'בטל', run: () => act(async () => {
         await Y.post(id, [target.chore ? { t: 'chore.undo', id: target.chore } : { t: 'item.done', id: target.item, on: false }])
         await render(true)
@@ -1533,6 +1637,20 @@ async function chatScreen(id) {
 
 const inviteCache = new Map()
 
+/** The invitation text: what it is, when, what is still missing, and the link. */
+function inviteText(st, link) {
+  const lines = [`בואו לחצר "${st.meta.name}" ${st.meta.emoji}`]
+  if (st.meta.kind === 'event') {
+    const when = [whenText(st.meta.when), st.meta.where].filter(Boolean).join(' · ')
+    if (when) lines.push(when)
+    const free = Y.eventBoard(st, null).free.map((i) => i.name)
+    lines.push(free.length ? `עוד חסר: ${free.slice(0, 5).join(', ')}${free.length > 5 ? ` ועוד ${free.length - 5}` : ''}` : 'מי מביא מה? לוחצים ולוקחים:')
+    if (free.length) lines.push('לוחצים ולוקחים:')
+  } else lines.push(`${count(st.chores.size, 'מטלה אחת', 'מטלות')} בתורות, כל אחד רואה מתי תורו:`)
+  if (link) lines.push(link)
+  return lines.join('\n')
+}
+
 async function inviteSheet(id, fresh = false) {
   const rec = await Y.localYard(id)
   const st = Y.stateOf(rec)
@@ -1541,7 +1659,8 @@ async function inviteSheet(id, fresh = false) {
   const members = (rec.members || []).slice().sort((a, b) => (a.role === b.role ? 0 : a.role === 'admin' ? -1 : 1))
   openSheet(`<h2>${fresh ? 'החצר פתוחה! עכשיו מזמינים 🐥' : 'הברווזונים בחצר'}</h2>
     <p class="lead">מי שיש לו את הקישור נכנס תוך 10 שניות, בלי הרשמה. הקישור תקף שבועיים.</p>
-    <div class="invite-box" id="link">יוצרת קישור…</div>
+    <p class="small muted" style="margin:12px 0 4px">ככה זה ייראה אצל החברים:</p>
+    <div class="wa-bubble"><span id="watext">${esc(inviteText(st, ''))}</span><span class="wa-link" id="link">יוצרת קישור…</span><span class="wa-time">${hhmm(Date.now())} ✓✓</span></div>
     <div class="stack">
       <a class="btn btn-primary" id="wa" href="#" target="_blank" rel="noopener" aria-disabled="true">שליחה בוואטסאפ</a>
       ${navigator.share ? '<button class="btn btn-soft" id="share" type="button">שיתוף…</button>' : ''}
@@ -1562,7 +1681,7 @@ async function inviteSheet(id, fresh = false) {
       inviteCache.set(id, link)
     }
     linkBox.textContent = link
-    const text = `בואו לחצר "${st.meta.name}" ${st.meta.emoji}\n${st.meta.kind === 'event' ? 'מי מביא מה? לוחצים ולוקחים:' : 'מטלות הבית בתורות:'}\n${link}`
+    const text = inviteText(st, link)
     const wa = root.querySelector('#wa')
     wa.href = `https://wa.me/?text=${encodeURIComponent(text)}`
     wa.removeAttribute('aria-disabled')
@@ -1615,7 +1734,7 @@ async function yardMenu(id) {
       if (a === 'calendar') return calendarSheet(id)
       if (a === 'again') {
         await closeSheet()
-        return newYardSheet({ kind: 'event', name: st.meta.name, emoji: st.meta.emoji, items: [...st.items.values()].sort((x, y) => (x.createdAt < y.createdAt ? -1 : 1)).map((i) => i.name) })
+        return newYardSheet({ again: true, kind: 'event', name: st.meta.name, emoji: st.meta.emoji, items: [...st.items.values()].sort((x, y) => (x.createdAt < y.createdAt ? -1 : 1)).map((i) => i.name) })
       }
       if (a === 'edit') return editYardSheet(id)
       if (a === 'mute') {
@@ -1720,22 +1839,26 @@ function pasteSheet() {
 
 // ---------- Install ----------
 
+const SHARE_ICON = '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#2F7DF6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9H6.5A1.5 1.5 0 0 0 5 10.5v9A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 17.5 9H16"/><path d="M12 14V3M8.5 6.5 12 3l3.5 3.5"/></svg>'
+const ADD_ICON = '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M12 8v8M8 12h8"/></svg>'
+
 function installSheet({ joined = false } = {}) {
   const ios = push.isIOS()
   openSheet(`<h2>${joined ? `🎉 ${g('את', 'אתה')} בחצר! עוד צעד קטן` : 'החצר על מסך הבית'}</h2>
     <p class="lead">${joined ? 'כדי לקבל תזכורות כשתורך, ולפתוח את החצר בלחיצה מהמסך:' : 'ככה מקבלים התראות כשתורך או כשמוסיפים משהו, ופותחים בלחיצה.'}</p>
     ${ios ? `
-      <ol style="padding-inline-start:20px;line-height:1.8;margin:14px 0 0">
-        <li><b>קודם, ${g('שמרי', 'שמור')} את הברווזון</b>, כי האפליקציה שעל מסך הבית לא רואה את מה שבספארי.</li>
-        <li>לוחצים על כפתור השיתוף <span aria-hidden="true">⬆️</span> בתחתית ספארי.</li>
-        <li>"הוספה למסך הבית", ואז "הוספה".</li>
-        <li>פותחים מהאייקון ובוחרים "כבר יש לי ברווזון".</li>
+      <ol class="steps">
+        <li><span class="step-n">1</span><span class="step-pic">🐥</span><span><b>קודם, ${g('שמרי', 'שמור')} את הברווזון</b> (כפתור למטה). האפליקציה שעל מסך הבית לא רואה את מה שבספארי.</span></li>
+        <li><span class="step-n">2</span><span class="step-pic">${SHARE_ICON}</span><span>בסרגל של ספארי למטה: <b>שיתוף</b> (אם לא רואים, קודם <b>⋯</b>).</span></li>
+        <li><span class="step-n">3</span><span class="step-pic">${ADD_ICON}</span><span><b>"הוספה למסך הבית"</b>, ואז "הוספה".</span></li>
+        <li><span class="step-n">4</span><span class="step-pic"><img src="icons/icon-192.png" alt="" width="34" height="34" style="border-radius:9px"></span><span>פותחים מהאייקון ובוחרים <b>"כבר יש לי ברווזון"</b>.</span></li>
       </ol>
       <div class="stack">${V.saved().some((v) => v.kind === 'passkey') ? `<p class="lead">✓ הברווזון שמור עם ${V.passkeyName()}. אפשר להמשיך לשלב 2.</p>` : V.passkeysAvailable() ? `<button class="btn btn-primary" id="savepk" type="button">שמירה עם ${V.passkeyName()}</button>` : ''}
         <button class="link-btn" id="copy" type="button">אין ${V.passkeyName()}? העתקת קוד העברה במקום</button></div>
       <p class="fine">קוד ההעברה הוא המפתח שלך לחצרות. אל ${g('תשלחי', 'תשלח')} אותו לאף אחד.</p>`
       : `<p class="lead" style="margin-top:12px">בכרום: תפריט ⋮ ← "התקנת אפליקציה" או "הוספה למסך הבית".</p>${deferredInstall ? '<div class="stack"><button class="btn btn-primary" id="inst" type="button">התקנה</button></div>' : ''}`}
-    <div class="stack"><button class="link-btn" id="hide" type="button">לא עכשיו</button></div>`, (root) => {
+    <div class="stack"><button class="link-btn" id="hide" type="button">לא עכשיו</button></div>
+    ${ios ? `<div class="down-hint" aria-hidden="true"><span>${SHARE_ICON}</span>שיתוף נמצא כאן למטה<span class="down-arrow">⬇</span></div>` : ''}`, (root) => {
     root.querySelector('#savepk')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget
       busy(btn, true, 'רגע…')
@@ -1819,8 +1942,8 @@ async function agenda(now = Date.now(), { member = me(), recs = null, undated = 
       out.push({ at, allDay: !c.time, late, emoji: c.emoji, name: c.name, yard, note: late ? 'באיחור' : '', ref: { chore: c.id } })
     }
     for (const it of st.items.values()) {
-      if (undated && !it.done && !it.due && it.claimedBy === myId) nodate.push({ emoji: st.meta.kind === 'event' ? '🧺' : '📌', name: it.name, yard, note: st.meta.kind === 'event' ? 'להביא' : '', ref: { item: it.id } })
-      if (it.done || !it.due || (it.claimedBy && it.claimedBy !== myId)) continue
+      if (undated && !it.done && !it.due && Y.takers(it).includes(myId)) nodate.push({ emoji: st.meta.kind === 'event' ? '🧺' : '📌', name: it.name, yard, note: st.meta.kind === 'event' ? 'להביא' : '', ref: { item: it.id } })
+      if (it.done || !it.due || (it.claimedBy && !Y.takers(it).includes(myId))) continue
       if (undated && !it.claimedBy) continue // the admin's view lists those once, under "בלי אף אחד"
       const at = Date.parse(it.due)
       if (at >= week) continue
@@ -1829,7 +1952,7 @@ async function agenda(now = Date.now(), { member = me(), recs = null, undated = 
     if (st.meta.kind === 'event' && st.meta.when) {
       const at = Date.parse(st.meta.when)
       if (at >= today && at < week) {
-        const mine = [...st.items.values()].filter((i) => i.claimedBy === myId).map((i) => i.name)
+        const mine = [...st.items.values()].filter((i) => Y.takers(i).includes(myId)).map((i) => i.name)
         const bring = myId === me() ? g('את מביאה', 'אתה מביא') : who(st, rec, myId).g('מביאה', 'מביא')
         out.push({ at, allDay: false, late: false, emoji: st.meta.emoji, name: st.meta.name, yard, note: mine.length ? `${bring}: ${mine.join(', ')}` : '' })
       }
@@ -1911,7 +2034,7 @@ async function summarySheet(id) {
 async function calendarSheet(id) {
   const rec = await Y.localYard(id)
   const st = Y.stateOf(rec)
-  const mine = [...st.items.values()].filter((i) => i.claimedBy === me()).map((i) => i.name)
+  const mine = [...st.items.values()].filter((i) => Y.takers(i).includes(me())).map((i) => i.name)
   const notes = mine.length ? `${g('אני מביאה', 'אני מביא')}: ${mine.join(', ')}` : ''
   const ics = Y.eventIcs(st, { uid: id, notes })
   const gcal = Y.googleCalendarUrl(st, { notes })
@@ -2012,6 +2135,7 @@ function meScreen() {
     <form id="f" novalidate>${duckForm(p, { pets: true })}<p class="err" id="err" role="alert"></p>
       <button class="btn btn-primary btn-wide" type="submit">שמירה</button></form>
     <h2 class="section">התראות</h2>${pushRow}
+    <label class="toggle-row"><input type="checkbox" id="morning" ${settings.morning === false ? '' : 'checked'}><span><b>☀️ סיכום בוקר</b><br><span class="small muted">ב־8:00, בחצרות של הבית: מה מחכה לך היום. רק אם יש משהו.</span></span></label>
     <h2 class="section">יש לי קישור</h2>
     <button class="btn btn-ghost" id="paste" type="button">הדבקת קישור הזמנה</button>
     <h2 class="section">פרטיות</h2>
@@ -2037,6 +2161,12 @@ function meScreen() {
   })
   bindSave()
   $app.querySelector('#install')?.addEventListener('click', installSheet)
+  $app.querySelector('#morning').onchange = (e) => {
+    settings = { ...settings, morning: e.target.checked }
+    db.saveSettings(settings)
+    Y.refreshAll().catch(() => undefined) // the yards learn it with the profile, and the reminders follow
+    toast(e.target.checked ? 'סיכום בוקר: פועל ☀️' : 'סיכום בוקר: כבוי')
+  }
   bindPrivacyLinks($app)
   $app.querySelector('#paste').onclick = quickPaste
   $app.querySelector('#pushon')?.addEventListener('click', () => act(async () => {
