@@ -148,7 +148,7 @@ test('every app file is in the service worker cache list, and nothing missing', 
   const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8')
   const listed = JSON.parse(/const FILES = (\[[\s\S]*?\])/.exec(sw)[1].replace(/'/g, '"').replace(/,\s*\]/, ']'))
   const walk = (d) => fs.readdirSync(path.join(root, d), { withFileTypes: true }).flatMap((f) => (f.isDirectory() ? walk(path.join(d, f.name)) : [path.join(d, f.name)]))
-  const files = walk('.').map((f) => f.replace(/^\.\//, '')).filter((f) => !/(^sw\.js$|^_headers$|LICENSE|\.md$)/.test(f))
+  const files = walk('.').map((f) => f.split(path.sep).join('/').replace(/^\.\//, '')).filter((f) => !/(^sw\.js$|^_headers$|LICENSE|\.md$)/.test(f))
   // index.html is cached as './' (Pages redirects /index.html → /, see sw.js).
   assert.ok(!listed.includes('index.html'), 'index.html must be cached as ./ only')
   for (const f of files) if (f !== 'index.html') assert.ok(listed.includes(f), `${f} is not in FILES (sw.js)`)
@@ -387,7 +387,7 @@ test('0.11: deep links: where a notification opens; anything odd falls back to t
   assert.equal(goFor('g1', '#/today'), '#/today')
   assert.equal(goFor('g1', 'https://evil.example'), '#/y/g1')
   assert.equal(goFor('g1', '?item=<script>'), '#/y/g1')
-  assert.ok(fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '../chatzer/sw.js'), 'utf8').includes(GO.source), 'sw.js checks links with the same rule')
+  assert.ok(fs.readFileSync(path.join(import.meta.dirname, '../chatzer/sw.js'), 'utf8').includes(GO.source), 'sw.js checks links with the same rule')
   const now = new Date(2026, 10, 10, 12, 0).getTime()
   const s = fold([
     e(A, { t: 'yard.meta', name: 'הבית', emoji: '🏡', kind: 'home' }),
