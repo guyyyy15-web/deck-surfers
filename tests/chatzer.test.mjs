@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fold, openReports, plannedReminders, choreRemindAt, splitList, summaryText, eventIcs, googleCalendarUrl, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite, parseItem, takers, isFull, eveBefore, nextMorning, icsFile, gcalLink, RRULES, goFor, GO, attention, attentionCount } from '../chatzer/js/yard.js'
+import { fold, openReports, plannedReminders, choreRemindAt, splitList, summaryText, eventIcs, googleCalendarUrl, eventBoard, homeBoard, nextInOrder, turnOf, orderOf, dueState, weekDuck, pollResults, extractInvite, parseItem, takers, isFull, eveBefore, nextMorning, icsFile, gcalLink, RRULES, goFor, GO, attention, attentionCount, isAway, nextSunday18 } from '../chatzer/js/yard.js'
 
 const A = 'a'.repeat(24)
 const B = 'b'.repeat(24)
@@ -253,7 +253,7 @@ test('ducklings: an old single accessory moves into its slot; new looks keep eve
   assert.ok(duck(null, 20).startsWith('<svg') && duck({ accessory: 'bow' }, 20).includes('#FF6B8A'))
   // fold keeps the whole look of a member
   const s = fold([e(B, { t: 'member.profile', nickname: 'מאיה', color: 'mint', hat: 'beret', body: 'hoodie', bodyColor: 'black', accessory: 'beret', evil: 'x' })], roles)
-  assert.deepEqual(s.profiles.get(B), { nickname: 'מאיה', voice: null, morning: 'on', color: 'mint', hat: 'beret', body: 'hoodie', bodyColor: 'black', accessory: 'beret' })
+  assert.deepEqual(s.profiles.get(B), { nickname: 'מאיה', voice: null, morning: 'on', away: null, color: 'mint', hat: 'beret', body: 'hoodie', bodyColor: 'black', accessory: 'beret' })
 })
 
 test('undo: "done" and "pass" can be taken back by whoever did them (or an admin), only the latest one', () => {
@@ -438,4 +438,76 @@ test('0.12: what waits for me, and each thing goes away by itself when it no lon
   assert.equal(kinds(look(evs)), 'item')
   assert.equal(look(evs, { seenSeq: n }).length, 0, 'seen')
   assert.equal(look([...evs, ev(C, { t: 'item.claim', id: 'i1', on: true })]).length, 0, 'someone took it')
+})
+
+test('swap turns (0.15): asked by the turn holder, accepted only by the one asked, paid back on their next turn', () => {
+  const base = [
+    e(A, { t: 'chore.put', id: 'c1', name: 'כלים', emoji: '🫧', every: 'day', order: [A, B, C] }),
+    e(A, { t: 'chore.swap', id: 'c1', with: C }),
+  ]
+  let s = fold(base, roles)
+  assert.deepEqual(s.chores.get('c1').swapReq?.to, C)
+  assert.deepEqual(attention({ events: [] }, s, C, roles).filter((x) => x.kind === 'swap').map((x) => x.ref), ['c1'])
+  assert.equal(fold([e(A, { t: 'chore.put', id: 'c1', name: 'כלים', every: 'day', order: [A, B, C] }), e(B, { t: 'chore.swap', id: 'c1', with: C })], roles).chores.get('c1').swapReq ?? null, null, 'only the turn holder asks')
+  s = fold([...base, e(B, { t: 'chore.swapOk', id: 'c1' })], roles)
+  assert.equal(s.chores.get('c1').turnOf, A, 'someone else cannot accept')
+  s = fold([...base, e(C, { t: 'chore.swapNo', id: 'c1' })], roles)
+  assert.deepEqual([s.chores.get('c1').turnOf, s.chores.get('c1').swapReq], [A, null])
+  const ok = [...base, e(C, { t: 'chore.swapOk', id: 'c1' })]
+  s = fold(ok, roles)
+  assert.deepEqual([s.chores.get('c1').turnOf, s.chores.get('c1').swapReq, s.chores.get('c1').history[0].kind], [C, null, 'swap'])
+  // C does A's turn → B (the rotation goes on from A) → A repays C's turn → A's own turn again
+  const seq2 = [...ok, e(C, { t: 'chore.done', id: 'c1' })]
+  assert.equal(fold(seq2, roles).chores.get('c1').turnOf, B)
+  const seq3 = [...seq2, e(B, { t: 'chore.done', id: 'c1' })]
+  s = fold(seq3, roles)
+  assert.deepEqual([s.chores.get('c1').turnOf, s.chores.get('c1').owe], [A, null])
+  s = fold([...seq3, e(A, { t: 'chore.done', id: 'c1' })], roles)
+  assert.equal(s.chores.get('c1').turnOf, A, 'then the normal rotation: after C comes A')
+  s = fold([...seq3, e(A, { t: 'chore.done', id: 'c1' }), e(A, { t: 'chore.done', id: 'c1' })], roles)
+  assert.equal(s.chores.get('c1').turnOf, B)
+  // undo of an accepted swap gives the turn back and forgets the debt
+  s = fold([...ok, e(C, { t: 'chore.undo', id: 'c1' })], roles)
+  assert.deepEqual([s.chores.get('c1').turnOf, s.chores.get('c1').owe], [A, null])
+})
+
+test('vacation (0.15): the rotation skips whoever is away; turns they hold move on; after the date they are back', () => {
+  const evs = [
+    e(A, { t: 'chore.put', id: 'c1', name: 'כלים', every: 'day', order: [A, B, C] }),
+    e(A, { t: 'chore.done', id: 'c1' }, '2026-11-10T08:00:00.000Z'),
+    e(B, { t: 'member.profile', nickname: 'בני', away: '2026-11-15' }, '2026-11-10T09:00:00.000Z'),
+  ]
+  let s = fold(evs, roles)
+  assert.equal(s.chores.get('c1').turnOf, C, 'B went away holding the turn')
+  assert.equal(s.chores.get('c1').history[0].kind, 'away')
+  assert.ok(isAway(s, B, '2026-11-15T20:00:00.000Z'))
+  assert.ok(!isAway(s, B, '2026-11-16T10:00:00.000Z'))
+  s = fold([...evs, e(C, { t: 'chore.done', id: 'c1' }, '2026-11-11T08:00:00.000Z'), e(A, { t: 'chore.done', id: 'c1' }, '2026-11-12T08:00:00.000Z')], roles)
+  assert.equal(s.chores.get('c1').turnOf, C, 'A → skips B → C')
+  s = fold([...evs, e(C, { t: 'chore.done', id: 'c1' }, '2026-11-11T08:00:00.000Z'), e(A, { t: 'chore.done', id: 'c1' }, '2026-11-17T08:00:00.000Z')], roles)
+  assert.equal(s.chores.get('c1').turnOf, B, 'back from vacation')
+  assert.equal(nextInOrder([A, B], A, new Map(), () => true), B, 'everyone away: the turn still moves')
+  assert.equal(fold([e(B, { t: 'member.profile', nickname: 'בני', away: 'מחר' })], roles).profiles.get(B).away, null)
+})
+
+test('weekly summary (0.15): each admin of a home yard gets Sunday 18:00 with the chores done this week', () => {
+  const now = Date.parse('2026-11-12T10:00:00.000Z') // a Thursday
+  const at = nextSunday18(now)
+  assert.equal(new Date(at).getDay(), 0)
+  assert.equal(new Date(at).getHours(), 18)
+  assert.ok(at > now && at - now < 7 * 86400e3)
+  const s = fold([
+    e(A, { t: 'yard.meta', name: 'הבית', emoji: '🏡', kind: 'home' }),
+    e(B, { t: 'member.profile', nickname: 'בני' }),
+    e(A, { t: 'chore.put', id: 'c1', name: 'כלים', every: 'day', order: [A, B, C] }),
+    e(A, { t: 'chore.done', id: 'c1' }, '2026-11-10T08:00:00.000Z'),
+    e(B, { t: 'chore.done', id: 'c1' }, '2026-11-11T08:00:00.000Z'),
+    e(C, { t: 'chore.pass', id: 'c1' }, '2026-11-11T09:00:00.000Z'),
+    e(A, { t: 'chore.done', id: 'c1' }, '2026-11-11T10:00:00.000Z'),
+  ], roles)
+  const w = plannedReminders(s, roles, now).filter((r) => r.id.startsWith('w_'))
+  assert.deepEqual(w.map((r) => [r.to, r.at, r.go]), [[A, at, '/team']])
+  assert.match(w[0].body, /3 מטלות/)
+  const ev = fold([e(A, { t: 'yard.meta', name: 'מנגל', emoji: '🔥', kind: 'event' })], roles)
+  assert.equal(plannedReminders(ev, roles, now).filter((r) => r.id.startsWith('w_')).length, 0)
 })

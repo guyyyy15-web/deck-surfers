@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, CLOTH_COLORS, MOODS, SLOTS, lookOf, legacyAccessory } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.14.0'
+export const APP_VERSION = '0.15.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -661,6 +661,7 @@ const ATT = {
   poll: () => '📊 הצבעה',
   item: () => '🆕 חדש ברשימה',
   report: (n) => `🚩 ${n === 1 ? 'דיווח' : `${n} דיווחים`}`,
+  swap: () => '🔁 בקשת החלפה',
 }
 /** "💬 2 הודעות · 📊 הצבעה": one chip per kind, in the order above. */
 function attIcons(att) {
@@ -1167,7 +1168,7 @@ function homeYardBody(rec, st, roles, myId) {
   const h = Y.homeBoard(st, myId, roles)
   const turnCards = h.myTurn.map((c) => {
     const order = Y.orderOf(c, roles)
-    const next = Y.nextInOrder(order, c.turn, roles)
+    const next = Y.nextInOrder(order, c.turn, roles, (m) => Y.isAway(st, m))
     const last = c.history.find((x) => x.kind === 'done')
     const lw = last && who(st, rec, last.by)
     const note = [last ? `${lw.name} ${last.by === myId ? g('עשית', 'עשית') : lw.g('עשתה', 'עשה')} את זה ${relDay(last.at)}` : '', next && next !== myId ? `${g('אחרייך', 'אחריך')}: ${who(st, rec, next).name}` : ''].filter(Boolean).join(', ')
@@ -1199,7 +1200,11 @@ function homeYardBody(rec, st, roles, myId) {
   }
   const doneRow = (it) => `<li class="row done"><button class="what" type="button" data-item="${it.id}"><span class="t">${esc(it.name)}</span><span class="s ok">${esc(who(st, rec, it.doneBy).name)} · בוצע ${relDay(it.doneAt)} ✓</span></button>${it.photoId && !st.hidden.has(it.photoId) ? `<img class="thumb" alt="תמונת הוכחה" data-photo="${it.photoId}">` : ''}</li>`
   const wd = h.weekDuck
-  return `${turnCards}
+  const swaps = h.chores.filter((c) => c.swapReq && c.swapReq.to === myId && c.turnOf === c.swapReq.from).map((c) => `<section class="swapcard" aria-label="בקשת החלפה">
+      <p>🔁 ${esc(who(st, rec, c.swapReq.from).name)} ${who(st, rec, c.swapReq.from).g('מבקשת', 'מבקש')} להחליף איתך: ${esc(c.emoji)} ${esc(c.name)}</p>
+      <div class="pc-a"><button class="btn btn-primary" type="button" data-chore="${c.id}">לראות ולענות</button></div></section>`).join('')
+  const away = Y.isAway(st, myId) ? `<p class="streak">🏖️ ${g('את', 'אתה')} בחופש עד ${esc(st.profiles.get(myId).away.split('-').reverse().slice(0, 2).join('.'))}: התורות מדלגות עליך</p>` : ''
+  return `${away}${swaps}${turnCards}
     <h2 class="section">מטלות בתורות</h2>
     ${h.chores.length ? `<ul class="list">${h.chores.map(choreRow).join('')}</ul>` : '<p class="muted">עוד אין מטלות קבועות.</p>'}
     <button class="chip-btn" id="newchore" type="button" style="margin-top:12px">${ICON.plus} מטלה קבועה</button>
@@ -1380,7 +1385,7 @@ async function passTurn(id, choreId) {
   const roles = Y.rolesOf(rec)
   const c = st.chores.get(choreId)
   if (!c) return
-  const next = Y.nextInOrder(Y.orderOf(c, roles), Y.turnOf(c, roles), roles)
+  const next = Y.nextInOrder(Y.orderOf(c, roles), Y.turnOf(c, roles), roles, (m) => Y.isAway(st, m))
   await act(() => Y.post(id, [{ t: 'chore.pass', id: choreId }], { body: `תורך! ${c.emoji} ${c.name} (העברה מ${identity.profile().nickname})`, to: [next], go: `?chore=${choreId}` }))
   toast(`העברת ל${who(st, rec, next).name}`, { label: 'בטל', run: () => act(async () => {
     await Y.post(id, [{ t: 'chore.undo', id: choreId }])
@@ -1475,12 +1480,21 @@ async function choreSheet(id, choreId) {
   const turn = Y.turnOf(c, roles)
   const order = Y.orderOf(c, roles).filter((m) => !roles.size || roles.has(m))
   const canEdit = c.createdBy === myId || roles.get(myId) === 'admin'
-  const hist = c.history.slice(0, 6).map((h) => `<li>${duckOf(st, rec, h.by, 22)}<span style="flex:1">${esc(who(st, rec, h.by).name)} · ${h.kind === 'pass' ? who(st, rec, h.by).g('העבירה את התור', 'העביר את התור') : h.kind === 'assign' ? `${who(st, rec, h.by).g('נתנה', 'נתן')} את התור ל${esc(who(st, rec, h.to).name)}` : 'בוצע'} ${relDay(h.at)}</span>${h.photoId && !st.hidden.has(h.photoId) ? `<img data-photo="${h.photoId}" alt="תמונת הוכחה"><button class="link-btn" type="button" data-photoact="${h.photoId}" style="padding:0 4px">${roles.get(myId) === 'admin' ? 'הסתרה' : 'דיווח'}</button>` : ''}</li>`).join('')
+  const req = c.swapReq && c.turnOf === c.swapReq.from ? c.swapReq : null
+  const swapHtml = req && req.to === myId
+    ? `<div class="swapcard"><p>🔁 ${esc(who(st, rec, req.from).name)} ${who(st, rec, req.from).g('מבקשת', 'מבקש')} ${g('שתחליפי', 'שתחליף')} ${who(st, rec, req.from).g('אותה', 'אותו')} הפעם. בתור הבא שלך ${who(st, rec, req.from).g('היא תעשה', 'הוא יעשה')} במקומך.</p><div class="pc-a"><button class="btn btn-primary" data-a="swapok">${g('מסכימה', 'מסכים')} 👍</button><button class="btn btn-ghost" data-a="swapno">לא הפעם</button></div></div>`
+    : req && req.from === myId
+      ? `<div class="swapcard"><p>⏳ ביקשת מ${esc(who(st, rec, req.to).name)} להחליף. מחכים לתשובה.</p><div class="pc-a"><button class="btn btn-ghost" data-a="swapno">לבטל את הבקשה</button></div></div>`
+      : ''
+  const owe = c.owe && (c.owe.to === myId || c.owe.by === myId) ? `<p class="lead">🔁 ${c.owe.to === myId ? `${esc(who(st, rec, c.owe.by).name)} ${who(st, rec, c.owe.by).g('חייבת', 'חייב')} לך תור` : `${g('את חייבת', 'אתה חייב')} תור ל${esc(who(st, rec, c.owe.to).name)}`}: זה יקרה בסבב הבא.</p>` : ''
+  const canSwap = turn === myId && !req && order.filter((m) => m !== myId && !Y.isAway(st, m)).length > 0
+  const hist = c.history.slice(0, 6).map((h) => `<li>${duckOf(st, rec, h.by, 22)}<span style="flex:1">${esc(who(st, rec, h.by).name)} · ${h.kind === 'pass' ? who(st, rec, h.by).g('העבירה את התור', 'העביר את התור') : h.kind === 'assign' ? `${who(st, rec, h.by).g('נתנה', 'נתן')} את התור ל${esc(who(st, rec, h.to).name)}` : h.kind === 'swap' ? `${who(st, rec, h.by).g('לקחה', 'לקח')} את התור של ${esc(who(st, rec, h.from).name)} 🔁` : h.kind === 'away' ? 'בחופש 🏖️, התור עבר הלאה' : 'בוצע'} ${relDay(h.at)}</span>${h.photoId && !st.hidden.has(h.photoId) ? `<img data-photo="${h.photoId}" alt="תמונת הוכחה"><button class="link-btn" type="button" data-photoact="${h.photoId}" style="padding:0 4px">${roles.get(myId) === 'admin' ? 'הסתרה' : 'דיווח'}</button>` : ''}</li>`).join('')
   openSheet(`<h2>${esc(c.emoji)} ${esc(c.name)}</h2>
     <p class="lead">${esc(Y.EVERY[c.every].label)}${c.time ? ` · בשעה ${c.time}` : ''} · ${c.everyone ? 'כל החצר בסבב' : count(order.length, 'ברווזון אחד בסבב', 'ברווזונים בסבב')}</p>
     <span class="lbl">התור</span>
-    <div style="display:flex;flex-wrap:wrap;gap:10px">${order.map((m) => `<span style="display:flex;flex-direction:column;align-items:center;gap:2px;font-size:13px;${m === turn ? 'font-weight:700' : 'opacity:.75'}">${duckOf(st, rec, m, m === turn ? 44 : 34)}${esc(who(st, rec, m).name)}${m === turn ? ' ⬅' : ''}</span>`).join('')}</div>
-    <div class="stack"><button class="btn btn-primary" data-a="done">בוצע + הוכחה</button>${turn === myId && order.length > 1 ? `<button class="btn btn-ghost" data-a="pass">להעביר ל${esc(who(st, rec, Y.nextInOrder(order, turn, roles)).name)}</button>` : ''}${turn === myId ? `<button class="btn btn-ghost" data-a="cal">📅 ${order.length === 1 ? 'ליומן (חוזר), עם תזכורת' : 'התור שלי ליומן, עם תזכורת'}</button>` : ''}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px">${order.map((m) => `<span style="display:flex;flex-direction:column;align-items:center;gap:2px;font-size:13px;${m === turn ? 'font-weight:700' : 'opacity:.75'}">${duckOf(st, rec, m, m === turn ? 44 : 34)}${esc(who(st, rec, m).name)}${Y.isAway(st, m) ? ' 🏖️' : ''}${m === turn ? ' ⬅' : ''}</span>`).join('')}</div>
+    ${swapHtml}${owe}
+    <div class="stack"><button class="btn btn-primary" data-a="done">בוצע + הוכחה</button>${turn === myId && order.length > 1 ? `<button class="btn btn-ghost" data-a="pass">להעביר ל${esc(who(st, rec, Y.nextInOrder(order, turn, roles, (m) => Y.isAway(st, m))).name)}</button>` : ''}${canSwap ? '<button class="btn btn-ghost" data-a="swap">🔁 לבקש להחליף תור</button>' : ''}${turn === myId ? `<button class="btn btn-ghost" data-a="cal">📅 ${order.length === 1 ? 'ליומן (חוזר), עם תזכורת' : 'התור שלי ליומן, עם תזכורת'}</button>` : ''}</div>
     ${hist ? `<span class="lbl">מה היה</span><ul class="history">${hist}</ul>` : ''}
     ${roles.get(myId) === 'admin' && (rec.members || []).length > 1 ? '<div class="stack"><button class="btn btn-soft" data-a="assign">👉 לתת את התור הזה למישהו אחר</button></div>' : ''}
     ${canEdit ? '<div class="stack"><button class="btn btn-ghost" data-a="edit">✏️ עריכת המטלה</button><button class="btn btn-danger" data-a="delete">למחוק את המטלה</button></div>' : ''}`, (root) => {
@@ -1488,6 +1502,19 @@ async function choreSheet(id, choreId) {
     root.querySelector('[data-a="assign"]')?.addEventListener('click', () => assignSheet(id, { chore: choreId }))
     root.querySelector('[data-a="edit"]')?.addEventListener('click', () => newChoreSheet(id, choreId))
     root.querySelector('[data-a="pass"]')?.addEventListener('click', () => passTurn(id, choreId))
+    root.querySelector('[data-a="swap"]')?.addEventListener('click', () => swapSheet(id, choreId))
+    root.querySelector('[data-a="swapok"]')?.addEventListener('click', async () => {
+      await act(() => Y.post(id, [{ t: 'chore.swapOk', id: choreId }], { body: `👍 ${identity.profile().nickname} ${g('מחליפה', 'מחליף')} אותך: ${c.emoji} ${c.name}`, to: [req.from], go: `?chore=${choreId}` }))
+      toast('סגור! התור הזה שלך 💪')
+      await closeSheet()
+      await render(true)
+    })
+    root.querySelector('[data-a="swapno"]')?.addEventListener('click', async () => {
+      const mineReq = req.from === myId
+      await act(() => Y.post(id, [{ t: 'chore.swapNo', id: choreId }], mineReq ? null : { body: `${identity.profile().nickname} לא ${g('יכולה', 'יכול')} להחליף הפעם: ${c.emoji} ${c.name}`, to: [req.from], go: `?chore=${choreId}` }))
+      await closeSheet()
+      await render(true)
+    })
     root.querySelector('[data-a="cal"]')?.addEventListener('click', () => choreCalendar(id, choreId))
     root.querySelector('[data-a="delete"]')?.addEventListener('click', async () => {
       if (!confirm(`למחוק את "${c.name}"?`)) return
@@ -1501,6 +1528,60 @@ async function choreSheet(id, choreId) {
       const u = await photoUrl(img.dataset.photo)
       if (u) img.src = u
       else img.hidden = true
+    })
+  })
+}
+
+/** Ask someone in the rotation to do my turn this time (I'll do their next one). */
+async function swapSheet(id, choreId) {
+  const rec = await Y.localYard(id)
+  const st = Y.stateOf(rec)
+  const roles = Y.rolesOf(rec)
+  const c = st.chores.get(choreId)
+  if (!c) return
+  const myId = me()
+  const others = Y.orderOf(c, roles).filter((m) => m !== myId && (!roles.size || roles.has(m)) && !Y.isAway(st, m))
+  openSheet(`<h2>🔁 להחליף תור</h2>
+    <p class="lead">${esc(c.emoji)} ${esc(c.name)}: מי יעשה הפעם במקומך? בסבב הבא ${g('את מחזירה', 'אתה מחזיר')} את הטובה.</p>
+    <div class="stack">${others.map((m) => `<button class="btn btn-ghost pick" data-m="${m}" style="justify-content:flex-start;gap:10px">${duckOf(st, rec, m, 30)}${esc(who(st, rec, m).name)}</button>`).join('')}</div>`, (root) => {
+    root.querySelectorAll('[data-m]').forEach((b) => (b.onclick = async () => {
+      const m = b.dataset.m
+      await act(() => Y.post(id, [{ t: 'chore.swap', id: choreId, with: m }], { body: `🔁 ${identity.profile().nickname} ${g('מבקשת', 'מבקש')} להחליף איתך תור: ${c.emoji} ${c.name}`, to: [m], go: `?chore=${choreId}` }))
+      toast(`הבקשה נשלחה ל${who(st, rec, m).name}`)
+      await closeSheet()
+      await render(true)
+    }))
+  })
+}
+
+/** Vacation: until a date the rotations skip me, and the turns I hold now move on. */
+async function awaySheet(id) {
+  const cur = settings.away
+  const today = new Date()
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const on = cur && cur >= iso(today)
+  const week = new Date(today.getTime() + 6 * 86400e3)
+  openSheet(`<h2>🏖️ אני בחופש</h2>
+    <p class="lead">עד התאריך הזה התורות ידלגו עליך, והתורות שאצלך עכשיו יעברו הלאה. ברווזונים צריכים חופש 🌴</p>
+    <label class="lbl" for="aw-d">עד (כולל)</label>
+    <input id="aw-d" class="input" type="date" min="${iso(today)}" value="${on ? cur : iso(week)}">
+    <div class="stack"><button class="btn btn-primary" data-a="go">${on ? 'לעדכן' : 'יוצאים לחופש'} 🏖️</button>${on ? `<button class="btn btn-ghost" data-a="back">חזרתי מהחופש</button>` : ''}</div>`, (root) => {
+    const save = async (away) => {
+      settings.away = away
+      db.saveSettings(settings)
+      await act(() => Y.postProfile(id))
+      await closeSheet()
+      await render(true)
+    }
+    root.querySelector('[data-a="go"]').onclick = async () => {
+      const v = root.querySelector('#aw-d').value
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return
+      await save(v)
+      toast('חופש נעים! 🌴 התורות מחכות לך')
+    }
+    root.querySelector('[data-a="back"]')?.addEventListener('click', async () => {
+      await save(null)
+      toast(`${g('ברוכה השבה', 'ברוך השב')} 💛`)
     })
   })
 }
@@ -1901,6 +1982,7 @@ async function yardMenu(id) {
     <div class="stack">
       <button class="btn btn-soft" data-a="invite">🐥 הברווזונים וההזמנה</button>
       ${isAdmin || st.meta.open ? '<button class="btn btn-ghost" data-a="team">👥 מי עושה מה (לו״ז של כולם)</button>' : ''}
+      ${st.meta.kind === 'home' && st.chores.size ? `<button class="btn btn-ghost" data-a="away">🏖️ ${Y.isAway(st, me()) ? 'בחופש עד ' + esc(st.profiles.get(me())?.away.split('-').reverse().slice(0, 2).join('.')) : 'אני בחופש'}</button>` : ''}
       <button class="btn btn-ghost" data-a="summary">📤 שליחת סיכום לוואטסאפ</button>
       ${st.meta.kind === 'event' && st.meta.when ? '<button class="btn btn-ghost" data-a="calendar">📅 הוספה ליומן</button>' : ''}
       ${st.meta.kind === 'event' ? '<button class="btn btn-ghost" data-a="again">🔁 אירוע חדש עם אותה רשימה</button>' : ''}
@@ -1914,6 +1996,7 @@ async function yardMenu(id) {
       if (a === 'invite') return inviteSheet(id)
       if (a === 'team') return go(`#/y/${id}/team`)
       if (a === 'summary') return summarySheet(id)
+      if (a === 'away') return awaySheet(id)
       if (a === 'calendar') return calendarSheet(id)
       if (a === 'again') {
         await closeSheet()

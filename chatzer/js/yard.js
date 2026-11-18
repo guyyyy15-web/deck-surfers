@@ -121,8 +121,18 @@ export function fold(events, roles = new Map()) {
       case 'member.profile':
         s.profiles.set(author, {
           nickname: str(ev.nickname, 20), voice: ev.voice === 'm' || ev.voice === 'f' ? ev.voice : null, morning: ev.morning === 'off' ? 'off' : 'on',
+          away: typeof ev.away === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ev.away) ? ev.away : null,
           ...Object.fromEntries(identity.LOOK_KEYS.filter((k) => typeof ev[k] === 'string').map((k) => [k, ev[k].slice(0, 16)])),
         })
+        // going away: the turns I hold right now move on to the next one who is here
+        if (isAway(s, author, at)) {
+          for (const c of s.chores.values()) {
+            if (c.turnOf !== author) continue
+            c.history = [{ by: author, at, kind: 'away', prev: { turnOf: c.turnOf, slot: c.slot || null, lastDoneAt: c.lastDoneAt } }, ...c.history].slice(0, 30)
+            c.turnOf = nextInOrder(orderOf(c, roles), c.slot || c.turnOf, roles, (m) => isAway(s, m, at))
+            c.slot = null
+          }
+        }
         break
 
       // Things to bring (event) or one-off tasks (home).
@@ -211,16 +221,46 @@ export function fold(events, roles = new Map()) {
         if (!c) break
         c.history = [{ by: author, at, photoId: typeof ev.photoId === 'string' ? ev.photoId : null, kind: 'done', prev: { turnOf: c.turnOf, slot: c.slot || null, lastDoneAt: c.lastDoneAt } }, ...c.history].slice(0, 30)
         c.lastDoneAt = at
-        c.turnOf = nextInOrder(orderOf(c, roles), c.slot || c.turnOf, roles)
+        c.turnOf = nextInOrder(orderOf(c, roles), c.slot || c.turnOf, roles, (m) => isAway(s, m, at))
         c.slot = null
+        // a swap is paid back: when the rotation reaches whoever covered, the one they covered for takes this turn
+        if (c.owe && c.turnOf === c.owe.to && (!roles.size || roles.has(c.owe.by))) { c.slot = c.owe.to; c.turnOf = c.owe.by; c.owe = null }
+        c.swapReq = null
+        break
+      }
+      case 'chore.swap': {
+        // "do my turn this time, I'll do yours": asked by whoever holds the turn, to someone else in the rotation
+        const c = s.chores.get(ev.id)
+        if (!c || c.turnOf !== author || typeof ev.with !== 'string' || ev.with === author) break
+        if (roles.size && !roles.has(ev.with)) break
+        if (!orderOf(c, roles).includes(ev.with)) break
+        c.swapReq = { from: author, to: ev.with, at }
+        break
+      }
+      case 'chore.swapOk': {
+        const c = s.chores.get(ev.id)
+        const r = c?.swapReq
+        if (!r || r.to !== author || c.turnOf !== r.from) break
+        c.history = [{ by: author, at, kind: 'swap', from: r.from, prev: { turnOf: c.turnOf, slot: c.slot || null, lastDoneAt: c.lastDoneAt } }, ...c.history].slice(0, 30)
+        if (!c.slot) c.slot = r.from
+        c.turnOf = author
+        c.owe = { by: r.from, to: author }
+        c.swapReq = null
+        break
+      }
+      case 'chore.swapNo': {
+        const c = s.chores.get(ev.id)
+        const r = c?.swapReq
+        if (r && (author === r.to || author === r.from)) c.swapReq = null
         break
       }
       case 'chore.pass': {
         const c = s.chores.get(ev.id)
         if (!c || c.turnOf !== author) break
         c.history = [{ by: author, at, kind: 'pass', prev: { turnOf: c.turnOf, slot: c.slot || null, lastDoneAt: c.lastDoneAt } }, ...c.history].slice(0, 30)
-        c.turnOf = nextInOrder(orderOf(c, roles), c.slot || c.turnOf, roles)
+        c.turnOf = nextInOrder(orderOf(c, roles), c.slot || c.turnOf, roles, (m) => isAway(s, m, at))
         c.slot = null
+        c.swapReq = null
         break
       }
       case 'chore.undo': {
@@ -230,6 +270,8 @@ export function fold(events, roles = new Map()) {
         if (!h || !h.prev || (h.by !== author && !isAdmin(author))) break
         Object.assign(c, { turnOf: h.prev.turnOf, slot: h.prev.slot, lastDoneAt: h.prev.lastDoneAt })
         c.history = c.history.slice(1)
+        if (h.kind === 'swap') c.owe = null
+        c.swapReq = null
         break
       }
 
@@ -309,14 +351,27 @@ export function openReports(s) {
 }
 
 /** The next one in the turn order after `cur`, skipping people who left the yard. */
-export function nextInOrder(order, cur, roles = new Map()) {
+export function nextInOrder(order, cur, roles = new Map(), skip = () => false) {
   const here = (m) => !roles.size || roles.has(m)
   const start = order.indexOf(cur)
+  for (let k = 1; k <= order.length; k++) {
+    const m = order[(start + k + order.length) % order.length]
+    if (here(m) && !skip(m)) return m
+  }
+  // everyone is away: the turn still goes on as before
   for (let k = 1; k <= order.length; k++) {
     const m = order[(start + k + order.length) % order.length]
     if (here(m)) return m
   }
   return order[0] ?? null
+}
+
+/** Away (on vacation) at time `at`: the profile's `away` date is today or later. */
+export function isAway(s, m, at = new Date().toISOString()) {
+  const a = s.profiles.get(m)?.away
+  if (!a) return false
+  const t = typeof at === 'number' ? at : Date.parse(at)
+  return startOfDay(t) <= Date.parse(a + 'T00:00:00')
 }
 
 /** The rotation: the chosen members, or everyone in the yard (in the order they joined). */
@@ -417,6 +472,15 @@ export const nextMorning = (now = Date.now()) => {
   return today > now ? today : atTime(startOfDay(now) + DAY + 3 * 3600e3, '08:00') // +3h: a DST day is not 24h
 }
 
+/** The next Sunday 18:00 (this week's, if it hasn't come yet): the weekly summary. */
+export const nextSunday18 = (now = Date.now()) => {
+  let d = startOfDay(now)
+  for (let k = 0; k < 8; k++) {
+    const day = d + k * DAY + 3 * 3600e3
+    if (new Date(day).getDay() === 0) { const at = atTime(day, '18:00'); if (at > now) return at }
+  }
+  return atTime(startOfDay(now) + 7 * DAY + 3 * 3600e3, '18:00')
+}
 /** When a chore with an hour should remind: its due day at that hour; if that already passed, the next such hour. */
 export function choreRemindAt(chore, now = Date.now()) {
   if (!chore.time) return null
@@ -454,6 +518,19 @@ export function plannedReminders(s, roles = new Map(), now = Date.now()) {
       const tasks = [...s.items.values()].filter((i) => !i.done && i.claimedBy === m && i.due && Date.parse(i.due) < end).map((i) => `📌 ${i.name}`)
       const all = [...chores, ...tasks]
       if (all.length) out.push({ id: `d_${m}`.slice(0, 64), to: m, at, body: `☀️ בוקר טוב! היום ברשימה: ${list(all)}`, go: '#/today' })
+    }
+  }
+  if (s.meta.kind === 'home' && s.chores.size) {
+    const at = nextSunday18(now)
+    const done = new Map()
+    for (const c of s.chores.values()) for (const h of c.history) if (h.kind === 'done' && Date.parse(h.at) > now - 7 * DAY) done.set(h.by, (done.get(h.by) || 0) + 1)
+    const total = [...done.values()].reduce((a, b) => a + b, 0)
+    const top = [...done.entries()].sort((a, b) => b[1] - a[1])[0]
+    const name = (m) => s.profiles.get(m)?.nickname || 'מישהו'
+    for (const [m, r] of roles) {
+      if (r !== 'admin') continue
+      out.push({ id: `w_${m}`.slice(0, 64), to: m, at, go: '/team',
+        body: total ? `📋 השבוע ב${s.meta.name}: ${total} מטלות נעשו · הכי הרבה: ${name(top[0])} (${top[1]})` : `📋 השבוע ב${s.meta.name} היה שקט. אולי תזכורת קטנה לחבר׳ה?` })
     }
   }
   for (const c of s.chores.values()) {
@@ -630,6 +707,7 @@ export const localYard = (id) => db.getYard(id).catch(() => null)
 // How others should address me (feminine/masculine) travels with my duckling, so the yard says "מביאה" or "מביא".
 const pick = (p) => ({
   nickname: p.nickname, voice: db.loadSettings().voice, morning: db.loadSettings().morning === false ? 'off' : 'on',
+  away: db.loadSettings().away || null,
   ...Object.fromEntries(identity.LOOK_KEYS.filter((k) => p[k] !== undefined).map((k) => [k, p[k]])),
 })
 
@@ -779,9 +857,15 @@ async function afterRefresh(yid, fresh) {
   const st = stateOf(await db.getYard(yid))
   const mine = st.profiles.get(keys.memberId)
   const want = pick(profile || {})
-  if (profile && (!mine || ['nickname', 'voice', 'morning', ...identity.LOOK_KEYS].some((k) => mine[k] !== want[k]))) {
+  if (profile && (!mine || ['nickname', 'voice', 'morning', 'away', ...identity.LOOK_KEYS].some((k) => (mine[k] ?? null) !== (want[k] ?? null)))) {
     await post(yid, [{ t: 'member.profile', ...want }], mine ? null : { body: `🐥 ${profile.nickname} בחצר!` })
   }
+}
+
+/** Posts my profile to this yard now (after a change that should count right away, like going on vacation). */
+export async function postProfile(yid) {
+  const { profile } = me()
+  if (profile) await post(yid, [{ t: 'member.profile', ...pick(profile) }])
 }
 
 async function pull(yid) {
@@ -990,6 +1074,7 @@ export function attention(rec, s, me, roles = new Map(), now = Date.now()) {
     else if (it.createdBy !== me && (first.get(`i:${it.id}`) || 0) > seen && !isFull(it) && !takers(it).includes(me)) out.push({ kind: 'item', ref: it.id, n: 1 })
   }
   for (const p of s.polls.values()) if (!p.closed && p.createdBy !== me && !p.votes.has(me)) out.push({ kind: 'poll', ref: p.id, n: 1 })
+  for (const c of s.chores.values()) if (c.swapReq && c.swapReq.to === me && c.turnOf === c.swapReq.from) out.push({ kind: 'swap', ref: c.id, n: 1 })
   if (roles.get(me) === 'admin') {
     const n = openReports(s).length
     if (n) out.push({ kind: 'report', n })

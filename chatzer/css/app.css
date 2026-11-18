@@ -336,3 +336,7 @@ body:has(.sheet-wrap) .toast { bottom: auto; top: calc(var(--safe-top) + 14px); 
 .pushcard .pc-t { display: grid; gap: 4px; }
 .pushcard .pc-a { grid-column: 1 / -1; }
 .streak { margin: 6px 0 0; font-size: 15px; }
+
+/* 0.15: a swap request (turns) */
+.swapcard{background:var(--tile-lilac);border-radius:var(--r-card);padding:14px 16px;margin:12px 0}
+.swapcard p{margin:0 0 10px;font-size:16px;line-height:1.45}

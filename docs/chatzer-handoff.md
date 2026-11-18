@@ -3,11 +3,11 @@
 Read this after `CLAUDE.md`. It says where things stand, how Guy (the owner) likes to work, and what is still open.
 Keep it current: when you finish a piece of work, update "Where things stand" and "Open" in the same commit.
 
-## Where things stand (2026-11-12)
+## Where things stand (2026-11-18)
 
-- **Live:** 0.13.0 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
+- **Live:** 0.15.0 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
   Worker `chatzer-sync` serves the API (same `server/` code as `nekamot-sync`, `--env chatzer`).
-- **Users:** first real day, 14 ducklings, 7 yards, 11 active in 24h. Run `bash scripts/chatzer-stats.sh` for now.
+- **Users:** 2026-11-18: 20 ducklings, 12 yards, active 11 → 5 → 2 people a day, only 4 phones with push (why 0.14/0.15 aim at retention). Run `bash scripts/chatzer-stats.sh` for now.
 - **Product docs (Claude artifacts, Guy's account):**
   - PRD: https://claude.ai/artifact/NX1myfDzagv5GJ1LN1WULE
   - Brand and product document: https://claude.ai/artifact/HTTbopvam3TmaxNYWGiwVh
@@ -45,6 +45,16 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
   only when `mv`/keys change or every 10 min. Home skips yards whose `seq` didn't move. Polling backs off from
   12 s / 45 s to 2 min while nothing changes; taps, a notification (sw.js posts `news`) or returning resets it.
   `stateOf()` is cached per yard (treat it as read-only). Measured idle phone: ~600 → ~40 requests/hour.
+- 0.14 retention: an invite card in yards of fewer than 3 (`inviteCard`, closes twice at most, `settings.invClosed`);
+  a notification card on home (`pushCard`, replaced the old install nudge; back after 3 days, 3 times at most);
+  a daily streak (`markActive`/`streakNow`, "🔥 N ימים ברצף") and duckling mood (cool at 3+, sleepy after 3 days
+  away, "התגעגענו!"); ready-made home templates (`HOME_TEMPLATES`: flat, family, dorm, couple).
+- 0.15 turns: **swap** (`chore.swap` {id, with} by the turn holder → `chore.swapOk` by the one asked: the turn is
+  theirs, `owe` {by, to} makes the asker take their next natural turn; `chore.swapNo` by either side; attention
+  kind `swap`, a card on the yard). **Vacation** (profile `away` = last day away, from `settings.away`, "🏖️ אני
+  בחופש" in the yard menu of home yards): `isAway()`, every rotation skips them (`nextInOrder(..., skip)`), the
+  turns they hold move on at once (history kind `away`). **Weekly summary** for each admin of a home yard:
+  reminder `w_<admin>` Sunday 18:00 (`nextSunday18`) with the chores done in the last 7 days, opens `/team`.
 
 ## How Guy works
 
@@ -84,14 +94,13 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
 
 ## Open (proposed to Guy, not built unless he says so)
 
-- Cost guards (proposed 2026-11-12, waiting for his pick): a monthly R2 operations budget in the Worker that pauses
-  photo uploads at 80% of the free tier; per-member rate limits; a kill switch variable (photos off / read-only);
-  a daily usage check that pushes a note to Guy above 50%; a Cloudflare billing notification.
+- Cost guards (Guy said yes 2026-11-18, next): a monthly R2 operations budget in the Worker that pauses
+  photo uploads at 80% of the free tier; a kill switch variable (photos off / read-only). Deploy both Workers.
 - Notification ideas he did not pick yet: a subscribed calendar feed (server-made, generic titles because of E2E),
   "remind on WhatsApp" for the admin, an Android app via Google Play (TWA).
 - Not verified on a real iPhone yet: that tapping "ליומן של האייפון" in the home-screen app opens the calendar
   import (blob download with `download`); Google Calendar link is the fallback.
-- UX ideas he did not pick yet: swap a turn ("תחליפי איתי השבוע?") and vacation mode (skip me for a few days).
+- Not verified on a real phone yet: the weekly admin summary (Sunday 18:00) and a swap request notification.
 - Not verified on a real phone yet: the evening-before reminder and the morning summary (tested in unit tests and
   the local Worker only). Ask Guy to confirm one arrives.
 - Possible later: a custom domain (needs Related Origin Requests for saved passkeys, see CLAUDE.md), automated
