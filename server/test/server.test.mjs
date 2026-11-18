@@ -521,3 +521,21 @@ test('sync: a full batch (200) in one request, duplicates inside a batch, gap-fr
   // Nothing newer: nothing applied, seq unchanged.
   assert.deepEqual(await (await post('/v1/items', s, { items: items.slice(0, 5) })).json(), { applied: 0, seq: 201 })
 })
+
+test('cost guard: photo uploads and downloads pause at 80% of the R2 free tier this month; other calls go on', async () => {
+  const s = newSpace()
+  assert.equal((await fetch(`${BASE}/v1/spaces`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '192.0.2.88' }, body: JSON.stringify(s) })).status, 201)
+  assert.equal((await fetch(`${BASE}/v1/photos/guard01`, { method: 'PUT', headers: h(s), body: randomBytes(100) })).status, 201)
+  const month = new Date().toISOString().slice(0, 7)
+  const sql = (q) => wr(['d1', 'execute', 'nekamot-sync', '--local', '--persist-to', persist, '--command', q])
+  sql(`UPDATE usage SET n = 800000 WHERE month = '${month}' AND kind = 'a'`)
+  const r = await fetch(`${BASE}/v1/photos/guard02`, { method: 'PUT', headers: h(s), body: randomBytes(100) })
+  assert.equal(r.status, 503)
+  assert.equal((await r.json()).error, 'photos paused')
+  assert.equal((await get('/v1/photos/guard01', s)).status, 200, 'class B still has room: photos still open')
+  sql(`INSERT INTO usage (month, kind, n) VALUES ('${month}', 'b', 8000001) ON CONFLICT (month, kind) DO UPDATE SET n = 8000001`)
+  assert.equal((await get('/v1/photos/guard01', s)).status, 503)
+  assert.equal((await get('/v1/changes?since=0', s)).status, 200, 'the rest of the API is not affected')
+  sql(`DELETE FROM usage WHERE month = '${month}'`)
+  assert.equal((await get('/v1/photos/guard01', s)).status, 200, 'a new month (or a reset) opens them again')
+})

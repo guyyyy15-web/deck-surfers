@@ -81,7 +81,8 @@ document in Claude Docs. Same encrypted-groups design as נקמות שלי, but 
 - **Privacy:** the server must never receive plaintext user content. Everything user-written is encrypted
   in `js/sync.js` before upload. Never log request bodies in the Worker.
 - **Cost guard:** keep the Worker limits (photo 3 MB, 300 MB per space, 8 GB total, 10 new spaces per
-  client per hour) unless deliberately changing the budget.
+  client per hour) unless deliberately changing the budget. R2 operations are counted per month in D1 `usage` (`r2Guard`):
+  photos pause at 80% of the free tier. Kill switches: Worker variables `PHOTOS_OFF=1`, `READ_ONLY=1`.
 - **UI copy:** Hebrew, gendered via `g(feminine, masculine)` (user setting). Inputs ≥ 16px, tap targets
   ≥ 44px, safe-area insets. Design tokens only from `css/app.css`.
 - **Content:** ideas and copy stay funny and harmless (nothing that hurts, costs money or humiliates).

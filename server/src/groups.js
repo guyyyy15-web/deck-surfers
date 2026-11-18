@@ -4,7 +4,7 @@
 // SHA-256 of the body) with the ECDSA key registered at /v2/identity. No accounts, no passwords.
 // Content: the server never sees plaintext; events and photos are encrypted with the group key.
 
-import { LIMITS, fail, json, readJson, sha256hex, same, limit, totalBytes } from './index.js'
+import { LIMITS, fail, json, readJson, sha256hex, same, limit, totalBytes, r2Guard, photosOff } from './index.js'
 import { sendPush, allowedEndpoint, unb64u } from './webpush.js'
 
 const G = {
@@ -447,6 +447,9 @@ export async function groupsRoute(req, env, url, ctx) {
   if (pm && m === 'PUT') {
     if (!PID.test(pm[1])) fail(400, 'bad id')
     if (!bytes.byteLength || bytes.byteLength > LIMITS.photoBytes) fail(413, 'photo too large')
+    if (photosOff(env)) fail(503, 'photos paused')
+    await r2Guard(env, 'a', 1)
+    await r2Guard(env, 'b', 1)
     const key = `groups/${gid}/${pm[1]}`
     if (await env.PHOTOS.head(key)) return json({ ok: true, existed: true })
     if (group.bytes + bytes.byteLength > G.groupBytes) fail(507, 'group full')
@@ -456,6 +459,7 @@ export async function groupsRoute(req, env, url, ctx) {
     return json({ ok: true }, 201)
   }
   if (pm && m === 'GET') {
+    await r2Guard(env, 'b', 1)
     const obj = await env.PHOTOS.get(`groups/${gid}/${pm[1]}`)
     if (!obj) fail(404, 'no photo')
     return new Response(obj.body, { headers: { 'Content-Type': 'application/octet-stream' } })

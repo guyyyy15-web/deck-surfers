@@ -25,6 +25,8 @@ q "SELECT date(created_at/1000,'unixepoch') day, COUNT(*) events, COUNT(DISTINCT
 
 echo "Free-tier meters, last 24h (Workers free: 100k requests/day; D1 free: 5M rows read, 100k written/day; R2: 10 GB, 1M class A, 10M class B/month)"
 npx wrangler d1 info chatzer --env chatzer 2>/dev/null | grep -E "database_size|rows_read_24h|rows_written_24h" || true
+echo "R2 operations this month as the cost guard counts them (photos pause at 800000 class A / 8000000 class B):"
+q "SELECT month, kind, n FROM usage WHERE month = strftime('%Y-%m','now')" || true
 S=$(date -u -d '-24 hours' +%Y-%m-%dT%H:%M:%SZ)
 E=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 curl -s https://api.cloudflare.com/client/v4/graphql -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN:-proxy-injected}" -H 'Content-Type: application/json' \

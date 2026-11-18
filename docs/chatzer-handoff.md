@@ -5,7 +5,7 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
 
 ## Where things stand (2026-11-18)
 
-- **Live:** 0.15.0 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
+- **Live:** 0.15.1 at https://hechatzer.pages.dev/ (Pages publishes `chatzer/` on every push to `main`).
   Worker `chatzer-sync` serves the API (same `server/` code as `nekamot-sync`, `--env chatzer`).
 - **Users:** 2026-11-18: 20 ducklings, 12 yards, active 11 → 5 → 2 people a day, only 4 phones with push (why 0.14/0.15 aim at retention). Run `bash scripts/chatzer-stats.sh` for now.
 - **Product docs (Claude artifacts, Guy's account):**
@@ -55,6 +55,13 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
   בחופש" in the yard menu of home yards): `isAway()`, every rotation skips them (`nextInOrder(..., skip)`), the
   turns they hold move on at once (history kind `away`). **Weekly summary** for each admin of a home yard:
   reminder `w_<admin>` Sunday 18:00 (`nextSunday18`) with the chores done in the last 7 days, opens `/team`.
+- 0.15.1 + server (both Workers, migration 0007): **cost guards**. `r2Guard()` counts R2 operations per month in D1
+  `usage` (class A exact, class B sampled 1 in 10) and answers 503 `photos paused` at 80% of the free tier (800k A,
+  8M B); a new month opens them again. Kill switches (Worker variables, dashboard or `wrangler.toml`):
+  `PHOTOS_OFF=1` pauses photo uploads, `READ_ONLY=1` refuses every change (reads still work). The app saves a
+  "done" without its photo when uploads are paused ("נשמר! בלי התמונה"). `scripts/chatzer-stats.sh` prints the
+  month's counts. נקמות שלי's backup client was not changed: while paused, its backup stops with an error and
+  nothing is lost on the phone.
 
 ## How Guy works
 
@@ -94,8 +101,8 @@ Keep it current: when you finish a piece of work, update "Where things stand" an
 
 ## Open (proposed to Guy, not built unless he says so)
 
-- Cost guards (Guy said yes 2026-11-18, next): a monthly R2 operations budget in the Worker that pauses
-  photo uploads at 80% of the free tier; a kill switch variable (photos off / read-only). Deploy both Workers.
+- Cost guard ideas not built: a daily usage check that pushes a note to Guy above 50%; a Cloudflare billing
+  notification (dashboard, Guy's account).
 - Notification ideas he did not pick yet: a subscribed calendar feed (server-made, generic titles because of E2E),
   "remind on WhatsApp" for the admin, an Android app via Google Play (TWA).
 - Not verified on a real iPhone yet: that tapping "ליומן של האייפון" in the home-screen app opens the calendar

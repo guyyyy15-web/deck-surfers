@@ -18,6 +18,30 @@ export const LIMITS = {
   totalSpaces: 20000,
 }
 
+// R2's free tier per month: 1M class A operations (put, list) and 10M class B (get, head). Photos pause at 80%.
+// Lists (only when a space or a group is deleted) are not counted: deleting must always work.
+export const R2_FREE = { a: 1_000_000, b: 10_000_000 }
+const R2_STOP = 0.8 // (not exported: the main module may export only objects and functions)
+const B_SAMPLE = 10 // class B is counted 1 in 10 (by 10), so a photo view costs no D1 write most of the time
+
+/**
+ * Cost guard for R2: counts `ops` operations of `kind` this month and refuses (503) once 80% of the free tier
+ * is used. Kill switches (Worker variables): PHOTOS_OFF=1 pauses photo uploads, READ_ONLY=1 every change.
+ */
+export async function r2Guard(env, kind, ops = 1) {
+  const month = new Date().toISOString().slice(0, 7)
+  let n
+  if (kind === 'b' && Math.random() >= 1 / B_SAMPLE) {
+    n = (await env.DB.prepare('SELECT n FROM usage WHERE month = ? AND kind = ?').bind(month, kind).first('n')) || 0
+  } else {
+    const add = kind === 'b' ? ops * B_SAMPLE : ops
+    n = await env.DB.prepare('INSERT INTO usage (month, kind, n) VALUES (?, ?, ?) ON CONFLICT (month, kind) DO UPDATE SET n = n + excluded.n RETURNING n')
+      .bind(month, kind, add).first('n')
+  }
+  if (n > R2_FREE[kind] * R2_STOP) fail(503, 'photos paused')
+}
+export const photosOff = (env) => env.PHOTOS_OFF === '1'
+
 // Sent with every response.
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -39,6 +63,8 @@ export default {
     const cors = corsHeaders(req, env)
     const headers = { ...SECURITY_HEADERS, ...cors }
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers })
+    // Kill switch: READ_ONLY=1 keeps everything readable and refuses every change (a budget or abuse emergency).
+    if (env.READ_ONLY === '1' && req.method !== 'GET' && req.method !== 'HEAD') return json({ error: 'read only' }, 503, headers)
     try {
       const res = await route(req, env, ctx)
       for (const [k, v] of Object.entries(headers)) res.headers.set(k, v)
@@ -221,6 +247,9 @@ async function route(req, env, ctx) {
     const sp = await authed(req, env)
     const body = await req.arrayBuffer()
     if (!body.byteLength || body.byteLength > LIMITS.photoBytes) fail(413, 'photo too large')
+    if (photosOff(env)) fail(503, 'photos paused')
+    await r2Guard(env, 'a', 1)
+    await r2Guard(env, 'b', 1)
     const key = `${sp.id}/${m[1]}`
     const had = await env.PHOTOS.head(key)
     if (had) return json({ ok: true, existed: true })
@@ -233,6 +262,7 @@ async function route(req, env, ctx) {
   }
   if (m && req.method === 'GET') {
     const sp = await authed(req, env)
+    await r2Guard(env, 'b', 1)
     const obj = await env.PHOTOS.get(`${sp.id}/${m[1]}`)
     if (!obj) fail(404, 'no photo')
     return new Response(obj.body, { headers: { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'private, no-store' } })

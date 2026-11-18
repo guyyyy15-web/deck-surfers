@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, CLOTH_COLORS, MOODS, SLOTS, lookOf, legacyAccessory } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.15.0'
+export const APP_VERSION = '0.15.1'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -54,7 +54,7 @@ function toast(msg, action = null) {
 }
 
 const errText = (e) => {
-  if (!navigator.onLine) return 'אין רשת כרגע. ננסה שוב כשתחזרי'
+  if (!navigator.onLine) return `אין רשת כרגע. ננסה שוב ${g('כשתחזרי', 'כשתחזור')}`
   if (e?.code === 'removed') return 'כבר לא בחצר הזאת'
   if (e?.status === 429) return 'רגע, יותר מדי בבת אחת. נסו שוב עוד דקה'
   return e?.message && /[֐-׿]/.test(e.message) ? e.message : 'משהו השתבש. נסו שוב'
@@ -1792,14 +1792,20 @@ async function doneSheet(id, target) {
     root.querySelector('#ok').onclick = async (e) => {
       const btn = e.currentTarget
       busy(btn, true, file ? 'מעלה את ההוכחה…' : 'רגע…')
+      let noPhoto = false
       const okDone = await act(async () => {
-        const photoId = file ? await Y.uploadPhoto(id, await shrinkFile(file)) : null
+        // Photos paused by the server's cost guard (or storage full): it still counts, just without the photo.
+        const photoId = file ? await Y.uploadPhoto(id, await shrinkFile(file)).catch((e) => {
+          if (e.status !== 503 && e.status !== 507) throw e
+          noPhoto = true
+          return null
+        }) : null
         const fresh = await Y.localYard(id)
         const s = Y.stateOf(fresh)
         const roles = Y.rolesOf(fresh)
         if (target.chore) {
           const c = s.chores.get(target.chore)
-          const next = Y.nextInOrder(Y.orderOf(c, roles), Y.turnOf(c, roles), roles)
+          const next = Y.nextInOrder(Y.orderOf(c, roles), Y.turnOf(c, roles), roles, (m) => Y.isAway(s, m))
           const notify = next && next !== me() ? { body: `תורך! ${c.emoji} ${c.name}`, to: [next], go: `?chore=${target.chore}` } : null
           await Y.post(id, [{ t: 'chore.done', id: target.chore, ...(photoId ? { photoId } : {}) }], notify)
         } else await Y.post(id, [{ t: 'item.done', id: target.item, on: true, ...(photoId ? { photoId } : {}) }])
@@ -1809,7 +1815,7 @@ async function doneSheet(id, target) {
       if (!okDone) return
       await closeSheet()
       celebrate()
-      toast('כל הכבוד! 🐥', { label: 'בטל', run: () => act(async () => {
+      toast(noPhoto ? 'נשמר! בלי התמונה: התמונות בהפסקה קצרה 🙈' : 'כל הכבוד! 🐥', { label: 'בטל', run: () => act(async () => {
         await Y.post(id, [target.chore ? { t: 'chore.undo', id: target.chore } : { t: 'item.done', id: target.item, on: false }])
         await render(true)
       }) })
