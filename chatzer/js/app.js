@@ -7,7 +7,7 @@ import * as V from './vault.js'
 import { duck, DUCK_COLORS, CLOTH_COLORS, MOODS, SLOTS, lookOf, legacyAccessory } from './duck.js'
 import { shrinkFile, photoUrl } from './images.js'
 
-export const APP_VERSION = '0.13.0'
+export const APP_VERSION = '0.14.0'
 
 // The same files are also on GitHub Pages (this repo); the real home is hechatzer.pages.dev.
 if (/github\.io$/.test(location.hostname)) location.replace(`https://hechatzer.pages.dev/${location.hash}`)
@@ -59,9 +59,66 @@ const errText = (e) => {
   if (e?.status === 429) return 'רגע, יותר מדי בבת אחת. נסו שוב עוד דקה'
   return e?.message && /[֐-׿]/.test(e.message) ? e.message : 'משהו השתבש. נסו שוב'
 }
+/** Hello line by the duckling's mood. */
+function moodLine(p) {
+  const last = settings.lastActive ? Date.parse(settings.lastActive) : 0
+  const days = last ? Math.floor((Date.now() - last) / 86400e3) : 0
+  if (days >= 3) return `${esc(p?.nickname)}, התגעגענו! 🥺`
+  return `שלום ${esc(p?.nickname)} 🦆`
+}
+/**
+ * The notification card on the home screen: stays until notifications are on (or it is closed, then it comes back
+ * after 3 days, 3 times at most). On an iPhone outside the home screen it explains adding the app first.
+ */
+function pushCard(recs) {
+  if (!recs.length) return ''
+  const st = push.status()
+  if (st !== 'off' && st !== 'needs-install') return ''
+  const n = settings.pushCardClosed || 0
+  if (n >= 3 || (settings.pushCardAt && Date.now() - settings.pushCardAt < 3 * 86400e3)) return ''
+  const ios = st === 'needs-install'
+  return `<section class="pushcard" aria-label="התראות">
+    <div class="pc-ic" aria-hidden="true">🔔</div>
+    <div class="pc-t"><b>כדי לא לפספס את התור שלך</b><span>${ios ? 'באייפון התראות מגיעות רק מהאפליקציה שעל מסך הבית. 2 צעדים וזהו.' : 'רק כשמשהו נוגע בך: תורך, משהו חדש ברשימה, הודעה. אפשר להשתיק כל חצר.'}</span></div>
+    <div class="pc-a"><button class="btn btn-primary" id="pc-on" type="button">${ios ? '📲 איך מוסיפים' : 'להפעיל התראות'}</button><button class="link-btn" id="pc-x" type="button">לא עכשיו</button></div></section>`
+}
+function bindPushCard(root) {
+  root.querySelector('#pc-on')?.addEventListener('click', async () => {
+    if (push.status() === 'needs-install') return installSheet()
+    await turnPushOn()
+    render(true)
+  })
+  root.querySelector('#pc-x')?.addEventListener('click', () => {
+    settings = { ...settings, pushCardClosed: (settings.pushCardClosed || 0) + 1, pushCardAt: Date.now() }
+    db.saveSettings(settings)
+    root.querySelector('.pushcard')?.remove()
+  })
+}
+/** Days in a row with something done in a yard (claimed, done, voted, wrote…), kept on the phone. */
+function markActive() {
+  const today = new Date().toDateString()
+  if (settings.lastActive === today) return
+  const yesterday = new Date(Date.now() - 86400e3).toDateString()
+  settings = { ...settings, streak: settings.lastActive === yesterday ? (settings.streak || 1) + 1 : 1, lastActive: today }
+  db.saveSettings(settings)
+}
+const streakNow = () => {
+  const today = new Date().toDateString(), yesterday = new Date(Date.now() - 86400e3).toDateString()
+  return settings.lastActive === today || settings.lastActive === yesterday ? settings.streak || 0 : 0
+}
+/** The duckling's mood on the home screen: happy when you were here today, missing you after a few quiet days. */
+function homeMood(p) {
+  const last = settings.lastActive ? Date.parse(settings.lastActive) : 0
+  const days = last ? Math.floor((Date.now() - last) / 86400e3) : 0
+  if (streakNow() >= 3) return { ...p, mood: 'cool' }
+  if (days >= 3) return { ...p, mood: 'sleepy' }
+  return p
+}
 async function act(fn) {
   try {
-    return await fn()
+    const r = await fn()
+    markActive()
+    return r
   } catch (e) {
     console.error(e)
     toast(errText(e))
@@ -652,11 +709,13 @@ async function homeScreen() {
   const p = identity.profile()
   if (!p) return welcome() // the duckling went away while this screen was loading (signed out, storage cleared)
   const showSave = recs.length > 0 && !V.saved().length && !settings.hideSave
-  const showInstall = !showSave && !push.standalone() && !settings.hideInstall && recs.length > 0
+  const showInstall = false // the notification card (pushCard) covers adding to the home screen now
   $app.innerHTML = `<main class="screen">
     ${navigator.onLine ? '' : offlineLine()}
-    <header class="top"><h1>החצרות שלי</h1><a class="icon-btn" href="#/today" aria-label="היום שלי">${ICON.cal}</a><a class="me-btn" href="#/me" aria-label="הברווזון שלי">${duck(p, 48)}</a></header>
-    <p class="lead">שלום ${esc(p?.nickname)} 🦆${waiting ? ` יש ${count(waiting, 'דבר אחד', 'דברים')} ${waiting === 1 ? 'שמחכה' : 'שמחכים'} לך` : ''}</p>
+    <header class="top"><h1>החצרות שלי</h1><a class="icon-btn" href="#/today" aria-label="היום שלי">${ICON.cal}</a><a class="me-btn" href="#/me" aria-label="הברווזון שלי">${duck(homeMood(p), 48)}</a></header>
+    <p class="lead">${moodLine(p)}${waiting ? ` יש ${count(waiting, 'דבר אחד', 'דברים')} ${waiting === 1 ? 'שמחכה' : 'שמחכים'} לך` : ''}</p>
+    ${streakNow() >= 2 ? `<p class="streak">🔥 <b>${streakNow()}</b> ימים ברצף ${g('שאת', 'שאתה')} בחצר${streakNow() >= 7 ? ' · ברווזון אלוף! 🏆' : ''}</p>` : ''}
+    ${pushCard(recs)}
     ${todayCard}
     ${cards.length ? `<div class="cards">${cards.map((c) => c.html).join('')}</div>` : `
       <div class="empty">${demoParade()}<b>עוד אין חצרות</b><span>${g('פתחי', 'פתח')} חצר ו${g('הזמיני', 'הזמן')} את החבר׳ה, או ${g('בקשי', 'בקש')} קישור ממי שמארגנ/ת.</span></div>`}
@@ -669,6 +728,7 @@ async function homeScreen() {
   </main>`
   $app.querySelectorAll('[data-new]').forEach((b) => (b.onclick = () => newYardSheet({ kind: b.dataset.new })))
   $app.querySelector('#paste').onclick = quickPaste
+  bindPushCard($app)
   $app.querySelector('#install')?.addEventListener('click', installSheet)
 }
 
@@ -713,6 +773,13 @@ const choreChips = (picked = null) => choreIdeas().map((c) => {
   return `<button type="button" class="choice" data-chore="${i}" aria-pressed="${on}">${c.emoji} ${c.name}</button>`
 }).join('')
 const everyOptions = (sel = 'week') => Object.entries(Y.EVERY).map(([k, v]) => `<option value="${k}"${k === sel ? ' selected' : ''}>${v.label}</option>`).join('')
+// Ready-made home yards: picking one pre-picks its chores (by name in CHORE_STARTERS) and suggests a name.
+const HOME_TEMPLATES = {
+  flat: { label: 'שותפים בדירה', emoji: '🏠', name: 'הדירה', chores: ['שטיפת כלים', 'להוריד את הזבל', 'ניקיון סלון', 'ניקיון שירותים ואמבטיה', 'קניות לבית'] },
+  family: { label: 'משפחה', emoji: '👨‍👩‍👧', name: 'הבית שלנו', chores: ['שטיפת כלים', 'להוריד את הזבל', 'בישול ארוחת ערב', 'כביסה', 'קיפול וסידור כביסה', 'השקיית עציצים'] },
+  dorm: { label: 'חדר במעונות', emoji: '🎓', name: 'החדר', chores: ['להוריד את הזבל', 'שטיפת רצפה', 'ניקוי המקרר', 'החלפת מצעים'] },
+  couple: { label: 'זוג', emoji: '💞', name: 'הבית שלנו', chores: ['שטיפת כלים', 'בישול ארוחת ערב', 'כביסה', 'שאיבת אבק', 'קניות לבית'] },
+}
 const EVENT_EMOJI = ['🔥', '🎂', '🍷', '🧺', '🎉', '🏖️', '🎄', '🥳']
 const HOME_EMOJI = ['🏡', '🏠', '🛋️', '🧹', '🪴', '🐕']
 
@@ -748,6 +815,8 @@ function newYardSheet(start = {}) {
           <button class="add-btn" id="citem-add" type="button" aria-label="הוספה לרשימה">${ICON.plus}</button></div>
         <div class="choices" id="citems" style="margin-top:8px"></div>`
         : `
+        <span class="lbl" id="htpl-l">מי גר/ה בבית?</span>
+        <div class="choices" role="group" aria-labelledby="htpl-l">${Object.entries(HOME_TEMPLATES).map(([k, t]) => `<button type="button" class="choice" data-htpl="${k}" aria-pressed="false">${t.emoji} ${t.label}</button>`).join('')}</div>
         <label class="lbl" for="yname">איך קוראים לחצר?</label>
         <input class="input" id="yname" maxlength="30" placeholder="למשל: הדירה בפלורנטין">
         <span class="lbl" id="pet-l">יש בעל חיים בבית?</span>
@@ -774,6 +843,13 @@ function newYardSheet(start = {}) {
       }))
       const bindChores = () => form.querySelectorAll('[data-chore]').forEach((x) => (x.onclick = () => x.setAttribute('aria-pressed', String(x.getAttribute('aria-pressed') !== 'true'))))
       bindChores()
+      single('[data-htpl]')
+      form.querySelectorAll('[data-htpl]').forEach((x) => x.addEventListener('click', () => {
+        const t = HOME_TEMPLATES[x.dataset.htpl]
+        form.querySelectorAll('[data-chore]').forEach((c) => c.setAttribute('aria-pressed', String(t.chores.includes(CHORE_STARTERS[Number(c.dataset.chore)]?.name))))
+        const nm = form.querySelector('#yname')
+        if (nm && !nm.value.trim()) nm.value = t.name
+      }))
       form.querySelectorAll('[data-pet]').forEach((b) => (b.onclick = () => {
         form.querySelectorAll('[data-pet]').forEach((y) => y.setAttribute('aria-pressed', String(y === b)))
         settings = { ...settings, pet: b.dataset.pet }
@@ -991,7 +1067,7 @@ async function yardScreen(id) {
       <button class="icon-btn" id="menu" type="button" aria-label="אפשרויות החצר">${ICON.dots}</button>
     </header>
     ${isAdmin && Y.openReports(st).length ? `<div class="nudge" style="background:var(--tile-orange)"><span style="flex:1">🚩 ${count(Y.openReports(st).length, 'דיווח פתוח', 'דיווחים פתוחים')} בחצר</span><button class="pill soft" id="reports" type="button">לטפל</button></div>` : ''}
-    ${bellHtml(rec, st, myId) || tipHtml(st.meta.kind)}
+    ${inviteCard(rec, st, id)}${bellHtml(rec, st, myId) || tipHtml(st.meta.kind)}
     ${body}
     ${polls}
     <div class="actions-bar">
@@ -1007,6 +1083,19 @@ async function yardScreen(id) {
   push.closeShown(id) // and this yard's notifications leave the lock screen
 }
 
+/** A yard with fewer than 3 ducklings is quiet: a big invite card (closed per yard, comes back once after a day). */
+function inviteCard(rec, st, id) {
+  const n = rec.members?.length || 1
+  if (n >= 3) return ''
+  const closed = (settings.invClosed || {})[id]
+  if (closed && (closed.n >= 2 || Date.now() - closed.at < 86400e3)) return ''
+  const slots = [0, 1, 2].map((i) => (i < n ? '<span class="iv-on">🐥</span>' : '<span class="iv-off">🥚</span>')).join('')
+  return `<section class="invcard" aria-label="הזמנה">
+    <div class="iv-row" aria-hidden="true">${slots}</div>
+    <b>${n === 1 ? 'החצר מחכה לחבר׳ה' : 'עוד ברווזון אחד וזה כבר חצר'}</b>
+    <span>${st.meta.kind === 'event' ? 'כל אחד בוחר מה מביא, ואף אחד לא מביא שוב חומוס.' : 'עם 3 ברווזונים התורות מתחלקים לבד, ואף אחד לא נשאר עם הכלים.'}</span>
+    <div class="iv-a"><button class="btn btn-primary" id="iv-go" type="button">📲 להזמין בוואטסאפ</button><button class="link-btn" id="iv-x" type="button">אחר כך</button></div></section>`
+}
 /** Members who took nothing yet (the admin can remind them). */
 const idleMembers = (rec, st) => (rec.members || []).map((m) => m.id).filter((m) => ![...st.items.values()].some((i) => Y.takers(i).includes(m)))
 
@@ -1153,6 +1242,14 @@ function bindYard(rec, st, roles, myId) {
   $('#share')?.addEventListener('click', () => summarySheet(id))
   $('#reports')?.addEventListener('click', () => reportsSheet(id))
   $('#invite').onclick = () => inviteSheet(id)
+  document.querySelector('#iv-go')?.addEventListener('click', () => inviteSheet(id))
+  document.querySelector('#iv-x')?.addEventListener('click', () => {
+    const c = { ...(settings.invClosed || {}) }
+    c[id] = { n: ((c[id] && c[id].n) || 0) + 1, at: Date.now() }
+    settings = { ...settings, invClosed: c }
+    db.saveSettings(settings)
+    document.querySelector('.invcard')?.remove()
+  })
   $('#poll').onclick = () => pollSheet(id)
   $('#newchore')?.addEventListener('click', () => newChoreSheet(id))
   $('#nudgefree')?.addEventListener('click', (e) => nudgeFree(rec, st, e.currentTarget))

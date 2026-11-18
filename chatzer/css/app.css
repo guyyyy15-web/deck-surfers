@@ -323,3 +323,16 @@ body:has(.sheet-wrap) .toast { bottom: auto; top: calc(var(--safe-top) + 14px); 
 
 /* The WhatsApp summary preview */
 .summary { margin: 10px 0 0; padding: 14px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); white-space: pre-wrap; font-family: var(--font-body); font-size: 14px; line-height: 21px; max-height: 40dvh; overflow: auto; }
+
+/* 0.14: invite card, notification card, streak */
+.invcard, .pushcard { margin-top: 14px; border-radius: 18px; padding: 16px; display: grid; gap: 6px; background: var(--tile-orange); }
+.invcard b, .pushcard b { font-size: 18px; }
+.invcard span, .pushcard span { font-size: 15px; line-height: 1.45; }
+.iv-row { display: flex; gap: 6px; font-size: 30px; }
+.iv-off { opacity: .45; filter: grayscale(1); }
+.iv-a, .pc-a { display: flex; align-items: center; gap: 12px; margin-top: 6px; flex-wrap: wrap; }
+.pushcard { grid-template-columns: auto 1fr; background: var(--tile-lilac); }
+.pushcard .pc-ic { font-size: 28px; }
+.pushcard .pc-t { display: grid; gap: 4px; }
+.pushcard .pc-a { grid-column: 1 / -1; }
+.streak { margin: 6px 0 0; font-size: 15px; }
